@@ -32,7 +32,7 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: "https://localhost:5173",// frontend local (change later to prod)
+    origin: ["https://localhost:5173","https://192.168.1.9:5173/"]// frontend local (change later to prod)
     credentials: true,
   })
 );
