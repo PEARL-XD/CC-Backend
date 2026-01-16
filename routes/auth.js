@@ -64,7 +64,8 @@ router.post("/refresh-token", refreshTokenLimiter, async (req, res) => {
     const accessToken = jwt.sign(
       newTokenPayload,
       process.env.ACCESS_TOKEN_SECRET,
-      { expiresIn: "1m" }
+      { expiresIn: "1m" },
+      console.log("token generated")
     );
     const newRefreshToken = jwt.sign(
       newTokenPayload,
@@ -180,6 +181,8 @@ router.post("/login", authLimiter, async (req, res) => {
 
     const accessToken = jwt.sign(tokenPayload, ACCESS_TOKEN_SECRET, {
       expiresIn: "1m",
+          console.log("token generated")
+
     });
     const refreshToken = jwt.sign(tokenPayload, REFRESH_TOKEN_SECRET, {
       expiresIn: "7d",
