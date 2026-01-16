@@ -179,7 +179,7 @@ router.post("/login", authLimiter, async (req, res) => {
     }
 
     const accessToken = jwt.sign(tokenPayload, ACCESS_TOKEN_SECRET, {
-      expiresIn: "15m",
+      expiresIn: "1m",
     });
     const refreshToken = jwt.sign(tokenPayload, REFRESH_TOKEN_SECRET, {
       expiresIn: "7d",
