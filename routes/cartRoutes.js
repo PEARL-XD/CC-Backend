@@ -1,62 +1,128 @@
 import express from "express";
-import { authenticateToken, authLimiter } from "./auth.js"; // adjust relative path if needed
-import Cart from "../models/Cart.js"; // create this Mongoose model as shown earlier
+import { authenticateToken, authLimiter } from "./auth.js";
+import Cart from "../models/Cart.js";
 
 const router = express.Router();
-
-// Apply authLimiter to all cart routes
 router.use(authLimiter);
 
-// GET /cart - get current user's cart items
+/* ---------------- HELPERS ---------------- */
+
+async function getCart(userId) {
+  let cart = await Cart.findOne({ userId });
+  if (!cart) {
+    cart = await Cart.create({ userId, items: [] });
+  }
+  return cart;
+}
+
+/* ---------------- READ ---------------- */
+
 router.get("/cart", authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
-
-    const cart = await Cart.findOne({ userId });
-    if (!cart) {
-      return res.json({ cart: [] }); // no cart found, return empty array
-    }
-
-    res.json({ cart: cart.items });
+    const cart = await Cart.findOne({ userId: req.user.id });
+    res.json({ cart: cart?.items ?? [] });
   } catch (err) {
-    console.error("Error fetching cart:", err);
-    res.status(500).json({ error: "Server error fetching cart" });
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch cart" });
   }
 });
 
-// POST /cart - update/save user's cart items
-router.post("/cart", authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { cart } = req.body;
+/* ---------------- MUTATIONS ---------------- */
 
-    if (!Array.isArray(cart)) {
-      return res.status(400).json({ error: "Cart must be an array" });
+// ADD ITEM
+router.post("/cart/add", authenticateToken, async (req, res) => {
+  try {
+    const { _id, selectedSize, quantity = 1, price, name, img } = req.body;
+    const userId = req.user.id;
+
+    if (!_id || typeof selectedSize !== "number") {
+      return res.status(400).json({ error: "Invalid item" });
     }
-    // Basic validation of cart items
-    for (const item of cart) {
-      if (
-        !item._id ||
-        typeof item.selectedSize !== "number" ||
-        !(item.quantity > 0) ||
-        typeof item.price !== "number" ||
-        item.price < 0 ||
-        typeof item.name !== "string"
-      ) {
-        return res.status(400).json({ error: "Invalid cart item format" });
-      }
-    }
-    // Upsert user's cart
-    const updatedCart = await Cart.findOneAndUpdate(
-      { userId },
-      { items: cart, updatedAt: new Date() },
-      { new: true, upsert: true }
+
+    const cart = await getCart(userId);
+
+    const idx = cart.items.findIndex(
+      (i) => i._id.toString() === _id && i.selectedSize === selectedSize
     );
 
-    res.json({ message: "Cart saved successfully." });
+    if (idx !== -1) {
+      cart.items[idx].quantity += Number(quantity);
+    } else {
+      cart.items.push({
+        _id,
+        selectedSize,
+        quantity: Number(quantity),
+        price,
+        name,
+        img,
+      });
+    }
+
+    cart.updatedAt = new Date();
+    await cart.save();
+
+    res.json({ cart: cart.items });
   } catch (err) {
-    console.error("Error saving cart:", err);
-    res.status(500).json({ error: "Server error saving cart" });
+    console.error(err);
+    res.status(500).json({ error: "Failed to add item" });
+  }
+});
+
+// REMOVE ITEM
+router.post("/cart/remove", authenticateToken, async (req, res) => {
+  try {
+    const { _id, selectedSize } = req.body;
+    const cart = await getCart(req.user.id);
+
+    cart.items = cart.items.filter(
+      (i) => !(i._id.toString() === _id && i.selectedSize === selectedSize)
+    );
+
+    cart.updatedAt = new Date();
+    await cart.save();
+
+    res.json({ cart: cart.items });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to remove item" });
+  }
+});
+
+// UPDATE QUANTITY
+router.post("/cart/update", authenticateToken, async (req, res) => {
+  try {
+    const { _id, selectedSize, quantity } = req.body;
+    const cart = await getCart(req.user.id);
+
+    const item = cart.items.find(
+      (i) => i._id.toString() === _id && i.selectedSize === selectedSize
+    );
+
+    if (!item) return res.status(404).json({ error: "Item not found" });
+    if (quantity < 1) return res.status(400).json({ error: "Invalid quantity" });
+
+    item.quantity = Number(quantity);
+    cart.updatedAt = new Date();
+    await cart.save();
+
+    res.json({ cart: cart.items });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update quantity" });
+  }
+});
+
+// CLEAR CART
+router.post("/cart/clear", authenticateToken, async (req, res) => {
+  try {
+    const cart = await getCart(req.user.id);
+    cart.items = [];
+    cart.updatedAt = new Date();
+    await cart.save();
+    res.json({ cart: [] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to clear cart" });
   }
 });
 
