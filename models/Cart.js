@@ -13,7 +13,6 @@ const CartSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
-    unique: true,
     required: true,
   },
   items: [CartItemSchema],
@@ -21,7 +20,7 @@ const CartSchema = new mongoose.Schema({
 });
 
 // 🔥 indexes
-CartSchema.index({ userId: 1 });
+CartSchema.index({ userId: 1 }, { unique: true });
 CartSchema.index({
   userId: 1,
   "items._id": 1,
