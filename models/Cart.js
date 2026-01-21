@@ -10,9 +10,23 @@ const CartItemSchema = new mongoose.Schema({
 });
 
 const CartSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", unique: true, required: true },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    unique: true,
+    required: true,
+    index: true, // 🔥 O(1) lookup
+  },
   items: [CartItemSchema],
   updatedAt: { type: Date, default: Date.now },
+});
+
+// 🔥 indexes
+CartSchema.index({ userId: 1 });
+CartSchema.index({
+  userId: 1,
+  "items._id": 1,
+  "items.selectedSize": 1,
 });
 
 const Cart = mongoose.model("Cart", CartSchema);
