@@ -63,19 +63,19 @@ app.get("/", (req, res) => {
    CRON (refresh-token cleanup)
 ======================= */
 
-// cron.schedule("* * * * *", async () => {
-//   try {
-//     const result = await RefreshToken.deleteMany({
-//       $or: [
-//         { revoked: true },
-//         { expiresAt: { $lte: new Date() } },
-//       ],
-//     });
-//     console.log(`🧹 Deleted ${result.deletedCount} old refresh tokens`);
-//   } catch (error) {
-//     console.error("❌ Cron cleanup error:", error);
-//   }
-// });
+cron.schedule("*/13 * * * *", async () => {
+  try {
+    const result = await RefreshToken.deleteMany({
+      $or: [
+        { revoked: true },
+        { expiresAt: { $lte: new Date() } },
+      ],
+    });
+    console.log(`🧹 Deleted ${result.deletedCount} old refresh tokens`);
+  } catch (error) {
+    console.error("❌ Cron cleanup error:", error);
+  }
+});
 
 /* =======================
    START SERVER (HTTP ONLY)
