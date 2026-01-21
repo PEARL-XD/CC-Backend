@@ -15,7 +15,6 @@ const CartSchema = new mongoose.Schema({
     ref: "User",
     unique: true,
     required: true,
-    index: true, // 🔥 O(1) lookup
   },
   items: [CartItemSchema],
   updatedAt: { type: Date, default: Date.now },
