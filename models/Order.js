@@ -3,14 +3,14 @@ import mongoose from "mongoose";
 
 const orderItemSchema = new mongoose.Schema(
   {
-    _id: { type: String, required: true },        // product id
+    _id: { type: String, required: true }, // product id
     name: { type: String, required: true },
     img: { type: String },
-    price: { type: Number, required: true },      // final price per item
+    price: { type: Number, required: true }, // final price per item
     selectedSize: { type: Number, required: true }, // grams
     quantity: { type: Number, required: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const orderSchema = new mongoose.Schema(
@@ -27,11 +27,24 @@ const orderSchema = new mongoose.Schema(
     },
     orderStatus: {
       type: String,
-      enum: ["PLACED", "CONFIRMED", "PACKED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
+      enum: [
+        "PLACED",
+        "CONFIRMED",
+        "PACKED",
+        "OUT_FOR_DELIVERY",
+        "DELIVERED",
+        "CANCELLED",
+      ],
       default: "PLACED",
     },
+    statusTimeline: [
+      {
+        status: String,
+        time: Date,
+      },
+    ],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export const Order = mongoose.model("Order", orderSchema);

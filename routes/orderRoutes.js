@@ -52,7 +52,13 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       totalAmount,
       razorpayOrderId: razorpayOrder.id,
       paymentStatus: "PENDING",
-      orderStatus: "PLACED",
+     orderStatus: "PLACED",
+statusTimeline: [
+  {
+    status: "PLACED",
+    time: new Date(),
+  },
+],
     });
 
     res.json({
@@ -136,7 +142,9 @@ router.get("/orders/me", authenticateToken, async (req, res) => {
 const isAdmin = (req) => {
   // easiest: set ADMIN_PHONE in .env and compare
   const adminPhone = process.env.ADMIN_PHONE;
-  return adminPhone && req.user?.phone && req.user.phone.toString() === adminPhone.toString();
+  // return adminPhone && req.user?.phone && req.user.phone.toString() === adminPhone.toString();
+  return req.user?.phone?.toString() === process.env.ADMIN_PHONE;
+
 };
 
 /**
@@ -178,11 +186,18 @@ router.patch("/admin/orders/:id/status", authenticateToken, async (req, res) => 
       return res.status(400).json({ error: "Invalid status" });
     }
 
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { orderStatus: status },
-      { new: true }
-    );
+    const order = await Order.findById(req.params.id);
+
+if (!order) return res.status(404).json({ error: "Order not found" });
+
+order.orderStatus = status;
+
+order.statusTimeline.push({
+  status,
+  time: new Date(),
+});
+
+await order.save();
 
     if (!order) return res.status(404).json({ error: "Order not found" });
 
