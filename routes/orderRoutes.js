@@ -2,7 +2,7 @@ import express from "express";
 import crypto from "crypto";
 import { razorpay } from "../config/razorpay.js";
 import { Order } from "../models/Order.js";
-import Product from "../models/Product.js"; // ← needed to verify prices server-side
+import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
 
 const router = express.Router();
@@ -42,7 +42,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
 
     // Fetch all products in one query
     const productIds = cartItems.map((i) => i._id);
-    const products = await Product.find({ _id: { $in: productIds } }).lean();
+    const products = await Item.find({ _id: { $in: productIds } }).lean();
     const productMap = Object.fromEntries(products.map((p) => [p._id.toString(), p]));
 
     // Validate every item and build the verified order items array
@@ -59,7 +59,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       verifiedItems.push({
         _id: product._id,
         name: product.name,       // ← from DB
-        img: product.img,         // ← from DB
+        img: product.imgUrl,         // ← from DB
         price: product.price,     // ← from DB, never item.price
         selectedSize: Number(item.selectedSize),
         quantity,

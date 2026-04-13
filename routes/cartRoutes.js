@@ -1,8 +1,7 @@
 import express from "express";
 import { authenticateToken, authLimiter } from "./auth.js";
 import Cart from "../models/Cart.js";
-import Product from "../models/Product.js"; // ← needed to verify price server-side
-
+import Item from "../models/Item.js"; // ← needed to verify price server-side
 const router = express.Router();
 router.use(authLimiter);
 
@@ -58,7 +57,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
     if (!validateItemInput(res, { _id, selectedSize: Number(selectedSize), quantity })) return;
 
     // 2. Fetch canonical product data — never trust client-supplied price/name
-    const product = await Product.findById(_id).lean();
+    const product = await Item.findById(_id).lean();
     if (!product) return res.status(404).json({ error: "Product not found" });
 
     const userId = req.user.id;
@@ -88,7 +87,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
         quantity: qty,
         price: product.price,   // ← from DB, not req.body
         name: product.name,     // ← from DB, not req.body
-        img: product.img,       // ← from DB, not req.body
+        img: product.imgUrl,       // ← from DB, not req.body
       });
     }
 
