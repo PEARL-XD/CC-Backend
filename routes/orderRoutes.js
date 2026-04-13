@@ -2,14 +2,36 @@ import express from "express";
 import crypto from "crypto";
 import { razorpay } from "../config/razorpay.js";
 import { Order } from "../models/Order.js";
-import { authenticateToken } from "./auth.js"; 
+import Product from "../models/Product.js"; // ← needed to verify prices server-side
+import { authenticateToken } from "./auth.js";
 
 const router = express.Router();
 
+/* ---------------- HELPERS ---------------- */
+
+/**
+ * Role-based admin check.
+ * Requires a `role` field on your User model (set server-side only).
+ * To migrate: add `role: { type: String, enum: ["user","admin"], default: "user" }`
+ * to your User schema, then set role:"admin" directly in MongoDB for your admin account.
+ *
+ * The old phone-based check is replaced because req.user comes from the JWT payload,
+ * which a client controls the contents of at registration time.
+ */
+import User from "../models/User.js";
+const isAdmin = async (req) => {
+  const user = await User.findById(req.user.id).select("role").lean();
+  return user?.role === "admin";
+};
+
+/* ---------------- ROUTES ---------------- */
+
 /**
  * POST /api/orders/create
- * Body: { cartItems: [...], schedule?: string }
+ * Body: { cartItems: [{ _id, quantity, selectedSize }], schedule?: string }
  * Auth: user
+ *
+ * Prices are fetched from the DB — never trusted from the client.
  */
 router.post("/orders/create", authenticateToken, async (req, res) => {
   try {
@@ -18,9 +40,35 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "Cart is empty" });
     }
 
-    // Calculate total in INR based on incoming cart
-    const totalAmount = cartItems.reduce(
-      (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0),
+    // Fetch all products in one query
+    const productIds = cartItems.map((i) => i._id);
+    const products = await Product.find({ _id: { $in: productIds } }).lean();
+    const productMap = Object.fromEntries(products.map((p) => [p._id.toString(), p]));
+
+    // Validate every item and build the verified order items array
+    const verifiedItems = [];
+    for (const item of cartItems) {
+      const product = productMap[item._id?.toString()];
+      if (!product) {
+        return res.status(400).json({ error: `Product not found: ${item._id}` });
+      }
+      const quantity = Number(item.quantity);
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+        return res.status(400).json({ error: `Invalid quantity for ${product.name}` });
+      }
+      verifiedItems.push({
+        _id: product._id,
+        name: product.name,       // ← from DB
+        img: product.img,         // ← from DB
+        price: product.price,     // ← from DB, never item.price
+        selectedSize: Number(item.selectedSize),
+        quantity,
+      });
+    }
+
+    // Calculate total server-side from verified prices
+    const totalAmount = verifiedItems.reduce(
+      (sum, item) => sum + item.price * item.quantity,
       0
     );
 
@@ -30,35 +78,21 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
 
     const amountInPaise = Math.round(totalAmount * 100);
 
-    // Create Razorpay order
     const razorpayOrder = await razorpay.orders.create({
       amount: amountInPaise,
       currency: "INR",
       receipt: `rcpt_${Date.now()}`,
     });
 
-    // Create local order document
     const order = await Order.create({
-      user: req.user.id, // from authenticateToken payload (id + phone)
-      items: cartItems.map((item) => ({
-        _id: item._id,
-        name: item.name,
-        img: item.img,
-        price: Number(item.price),
-        selectedSize: Number(item.selectedSize),
-        quantity: Number(item.quantity),
-      })),
+      user: req.user.id,
+      items: verifiedItems,
       schedule,
       totalAmount,
       razorpayOrderId: razorpayOrder.id,
       paymentStatus: "PENDING",
-     orderStatus: "PLACED",
-statusTimeline: [
-  {
-    status: "PLACED",
-    time: new Date(),
-  },
-],
+      orderStatus: "PLACED",
+      statusTimeline: [{ status: "PLACED", time: new Date() }],
     });
 
     res.json({
@@ -78,7 +112,7 @@ statusTimeline: [
 /**
  * POST /api/orders/verify
  * Body: { localOrderId, razorpay_order_id, razorpay_payment_id, razorpay_signature }
- * Auth: user
+ * Auth: user (must own the order)
  */
 router.post("/orders/verify", authenticateToken, async (req, res) => {
   try {
@@ -96,11 +130,21 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
     const order = await Order.findById(localOrderId);
     if (!order) return res.status(404).json({ error: "Order not found" });
 
-    // Verify signature
+    // Ownership check — prevent one user verifying another user's order
+    if (order.user.toString() !== req.user.id) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    // Idempotency guard — don't process an already-paid order twice
+    if (order.paymentStatus === "PAID") {
+      return res.status(409).json({ error: "Order already verified" });
+    }
+
+    // Verify Razorpay signature
     const body = razorpay_order_id + "|" + razorpay_payment_id;
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(body.toString())
+      .update(body)
       .digest("hex");
 
     if (expectedSignature !== razorpay_signature) {
@@ -111,6 +155,7 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
 
     order.paymentStatus = "PAID";
     order.orderStatus = "CONFIRMED";
+    order.statusTimeline.push({ status: "CONFIRMED", time: new Date() });
     await order.save();
 
     res.json({ success: true, message: "Payment verified", order });
@@ -135,30 +180,17 @@ router.get("/orders/me", authenticateToken, async (req, res) => {
 });
 
 /**
- * Simple admin check helper
- * For now: treat one specific user as admin (by phone or id).
- * Later you can switch to a proper role field on User.
- */
-const isAdmin = (req) => {
-  // easiest: set ADMIN_PHONE in .env and compare
-  const adminPhone = process.env.ADMIN_PHONE;
-  // return adminPhone && req.user?.phone && req.user.phone.toString() === adminPhone.toString();
-  return req.user?.phone?.toString() === process.env.ADMIN_PHONE;
-
-};
-
-/**
  * GET /api/admin/orders
- * Auth: admin
+ * Auth: admin (role-based)
  */
 router.get("/admin/orders", authenticateToken, async (req, res) => {
   try {
-    if (!isAdmin(req)) {
+    if (!(await isAdmin(req))) {
       return res.status(403).json({ error: "Admin access only" });
     }
 
     const orders = await Order.find()
-      .populate("user", "name phone email tower flat") // populate user details
+      .populate("user", "name phone email tower flat")
       .sort({ createdAt: -1 });
 
     res.json({ orders });
@@ -171,11 +203,11 @@ router.get("/admin/orders", authenticateToken, async (req, res) => {
 /**
  * PATCH /api/admin/orders/:id/status
  * Body: { status }
- * Auth: admin
+ * Auth: admin (role-based)
  */
 router.patch("/admin/orders/:id/status", authenticateToken, async (req, res) => {
   try {
-    if (!isAdmin(req)) {
+    if (!(await isAdmin(req))) {
       return res.status(403).json({ error: "Admin access only" });
     }
 
@@ -186,20 +218,13 @@ router.patch("/admin/orders/:id/status", authenticateToken, async (req, res) => 
       return res.status(400).json({ error: "Invalid status" });
     }
 
+    // Single null check, in the right place — before any mutations
     const order = await Order.findById(req.params.id);
-
-if (!order) return res.status(404).json({ error: "Order not found" });
-
-order.orderStatus = status;
-
-order.statusTimeline.push({
-  status,
-  time: new Date(),
-});
-
-await order.save();
-
     if (!order) return res.status(404).json({ error: "Order not found" });
+
+    order.orderStatus = status;
+    order.statusTimeline.push({ status, time: new Date() });
+    await order.save();
 
     res.json({ success: true, order });
   } catch (err) {

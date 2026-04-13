@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema({
   passwordHash: { type: String, required: true },
   tower: { type: String, required: true },
   flat: { type: String, required: true },
+  role: { type: String, enum: ["user", "admin"], default: "user" }, // ← add this
 }, {
   timestamps: true,
 });
