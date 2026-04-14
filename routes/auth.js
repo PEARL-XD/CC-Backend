@@ -43,7 +43,7 @@ const router = express.Router();
 router.post("/refresh-token", refreshTokenLimiter, async (req, res) => {
   try {
     console.log("REFRESH TOKEN HIT");
-    const token = req.cookies?.refreshToken;
+    const token = req.cookies?.refreshToken || req.body?.refreshToken;
     if (!token)
       return res.status(401).json({ error: "Refresh token missing." });
 
