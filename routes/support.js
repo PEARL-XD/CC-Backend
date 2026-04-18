@@ -166,25 +166,7 @@ router.get("/support/me", authenticateToken, async (req, res) => {
 });
 
 // ── GET /api/admin/support — all tickets (admin) ────────────────────
-router.get("/admin/support", authenticateToken, async (req, res) => {
-  try {
-    // Reuse the same role-based admin check pattern from your order routes
-    const User = (await import("../models/User.js")).default;
-    const user = await User.findById(req.user.id).select("role").lean();
-    if (user?.role !== "admin") {
-      return res.status(403).json({ error: "Admin access only." });
-    }
 
-    const tickets = await SupportTicket.find()
-      .populate("user", "name phone email tower flat")
-      .populate("order", "totalAmount items createdAt orderStatus")
-      .sort({ createdAt: -1 });
-
-    res.json({ tickets });
-  } catch (err) {
-    console.error("Admin fetch tickets error:", err);
-    res.status(500).json({ error: "Failed to fetch tickets." });
-  }
   // ── GET /api/admin/support ──────────────────────────────────────────
 // Query params: status (optional), search (optional), page, limit
 router.get("/admin/support", authenticateToken, async (req, res) => {
@@ -309,7 +291,6 @@ router.patch("/admin/support/:id/status", authenticateToken, async (req, res) =>
     console.error("Update ticket status error:", err);
     res.status(500).json({ error: "Failed to update ticket." });
   }
-});
 });
 
 export default router;
