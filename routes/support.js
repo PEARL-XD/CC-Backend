@@ -190,23 +190,24 @@ router.get("/admin/support", authenticateToken, async (req, res) => {
 router.get("/admin/support", authenticateToken, async (req, res) => {
   try {
     const User = (await import("../models/User.js")).default;
-    const user = await User.findById(req.user.id).select("role").lean();
-    if (user?.role !== "admin") {
+    const adminUser = await User.findById(req.user.id).select("role").lean();
+    if (adminUser?.role !== "admin") {
       return res.status(403).json({ error: "Admin access only." });
     }
 
     const { status, search, page = 1, limit = 20 } = req.query;
 
-    // Build filter
+    // Build ticket filter for the LIST only
     const filter = {};
     if (status && status !== "ALL") filter.status = status;
 
-    // If search term given, find matching users first then filter by those user IDs
     if (search?.trim()) {
       const regex = new RegExp(search.trim(), "i");
       const matchedUsers = await User.find({
         $or: [{ name: regex }, { phone: regex }, { email: regex }],
-      }).select("_id").lean();
+      })
+        .select("_id")
+        .lean();
       filter.user = { $in: matchedUsers.map((u) => u._id) };
     }
 
@@ -221,18 +222,31 @@ router.get("/admin/support", authenticateToken, async (req, res) => {
       .limit(Number(limit))
       .lean();
 
-    // Summary counts — always over the full collection, not filtered
-    const [openCount, reviewCount, resolvedCount, totalCount] = await Promise.all([
+    // Summary counts — always global, never affected by the current filter
+    const [openCount, inReviewCount, resolvedCount, totalCount] = await Promise.all([
       SupportTicket.countDocuments({ status: "OPEN" }),
       SupportTicket.countDocuments({ status: "IN_REVIEW" }),
       SupportTicket.countDocuments({ status: "RESOLVED" }),
       SupportTicket.countDocuments({}),
     ]);
 
-    res.json({
+    // Log to confirm it's being built correctly
+    console.log("Summary:", { openCount, inReviewCount, resolvedCount, totalCount });
+
+    return res.json({
       tickets,
-      pagination: { total, page: Number(page), limit: Number(limit), totalPages: Math.ceil(total / Number(limit)) },
-      summary: { open: openCount, inReview: reviewCount, resolved: resolvedCount, total: totalCount },
+      pagination: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(total / Number(limit)),
+      },
+      summary: {
+        open:      openCount,
+        inReview:  inReviewCount,
+        resolved:  resolvedCount,
+        total:     totalCount,
+      },
     });
   } catch (err) {
     console.error("Admin fetch support tickets error:", err);
