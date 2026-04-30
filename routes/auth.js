@@ -3,6 +3,8 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import rateLimit from "express-rate-limit";
 import { promisify } from "util";
+import crypto from "crypto";
+import { Resend } from "resend";
 
 import User from "../models/User.js";
 import RefreshToken from "../models/RefreshToken.js";
@@ -34,6 +36,52 @@ const refreshCookieOptions = {
   path: "/",
   maxAge: REFRESH_TOKEN_MAX_AGE_MS,
 };
+
+const resend = process.env.RESEND_API_KEY
+  ? new Resend(process.env.RESEND_API_KEY)
+  : null;
+
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: "Too many reset attempts. Please try again later." },
+});
+
+function generateResetCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function hashResetCode(code) {
+  return crypto.createHash("sha256").update(code).digest("hex");
+}
+
+async function sendPasswordResetEmail({ to, name, code }) {
+  if (!resend) {
+    throw new Error("RESEND_API_KEY is not configured.");
+  }
+
+  const { error } = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL,
+    to: [to],
+    subject: "Your CleanChops password reset code",
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <h2>Reset your password</h2>
+        <p>Hi ${name || "there"},</p>
+        <p>Use this code to reset your CleanChops password:</p>
+        <div style="font-size: 28px; font-weight: bold; letter-spacing: 6px; margin: 16px 0;">
+          ${code}
+        </div>
+        <p>This code expires in 15 minutes.</p>
+        <p>If you did not request this, you can ignore this email.</p>
+      </div>
+    `,
+  });
+
+  if (error) {
+    throw new Error(error.message || "Failed to send reset email.");
+  }
+}
 
 function buildTokenPayload(user) {
   return {
@@ -375,6 +423,111 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     return res.status(500).json({ error: "Server error while updating profile." });
   }
 });
+router.post("/forgot-password", passwordResetLimiter, async (req, res) => {
+  try {
+    const email = req.body.email?.trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required." });
+    }
+
+    const user = await User.findOne({ email });
+
+    // Always return the same message so attackers can't discover accounts
+    const genericMessage = {
+      message: "If an account exists for that email, a reset code has been sent.",
+    };
+
+    if (!user) {
+      return res.status(200).json(genericMessage);
+    }
+
+    const code = generateResetCode();
+
+    user.passwordResetCodeHash = hashResetCode(code);
+    user.passwordResetExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    user.passwordResetAttempts = 0;
+    await user.save();
+
+    await sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      code,
+    });
+
+    return res.status(200).json(genericMessage);
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    return res.status(500).json({ error: "Could not process password reset." });
+  }
+});
+
+router.post("/reset-password", passwordResetLimiter, async (req, res) => {
+  try {
+    const email = req.body.email?.trim().toLowerCase();
+    const code = req.body.code?.trim();
+    const newPassword = req.body.newPassword ?? "";
+
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({
+        error: "Email, code and new password are required.",
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        error: "Password must be at least 8 characters.",
+      });
+    }
+
+    const user = await User.findOne({ email });
+
+    if (
+      !user ||
+      !user.passwordResetCodeHash ||
+      !user.passwordResetExpiresAt
+    ) {
+      return res.status(400).json({ error: "Invalid or expired reset code." });
+    }
+
+    if (user.passwordResetExpiresAt.getTime() < Date.now()) {
+      user.passwordResetCodeHash = null;
+      user.passwordResetExpiresAt = null;
+      user.passwordResetAttempts = 0;
+      await user.save();
+
+      return res.status(400).json({ error: "Reset code has expired." });
+    }
+
+    const incomingCodeHash = hashResetCode(code);
+
+    if (incomingCodeHash !== user.passwordResetCodeHash) {
+      user.passwordResetAttempts = (user.passwordResetAttempts || 0) + 1;
+      await user.save();
+
+      return res.status(400).json({ error: "Invalid or expired reset code." });
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordResetCodeHash = null;
+    user.passwordResetExpiresAt = null;
+    user.passwordResetAttempts = 0;
+    await user.save();
+
+    await RefreshToken.updateMany(
+      { userId: user._id, revoked: false },
+      { revoked: true }
+    );
+
+    return res.status(200).json({
+      message: "Password reset successful. Please log in again.",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return res.status(500).json({ error: "Could not reset password." });
+  }
+});
+
 
 export default router;
 export { authLimiter, authenticateToken };
