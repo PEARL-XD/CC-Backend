@@ -235,6 +235,15 @@ router.post("/logout", authLimiter, async (req, res) => {
     res.status(500).json({ error: "Server error during logout." });
   }
 });
+router.patch('/users/profile', authMiddleware, async (req, res) => {
+  const { name, email, phone } = req.body;
+  const user = await User.findByIdAndUpdate(
+    req.user._id,
+    { name, email, phone },
+    { new: true }
+  );
+  res.json({ user });
+});
 
 export default router;
 export { authLimiter, authenticateToken };
