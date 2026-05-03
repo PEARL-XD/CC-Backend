@@ -139,7 +139,7 @@ const authenticateToken = async (req, res, next) => {
     req.user = payload;
     next();
   } catch (err) {
-    return res.status(403).json({ error: "Invalid or expired access token." });
+    return res.status(401).json({ error: "Invalid or expired access token." });
   }
 };
 
@@ -165,7 +165,7 @@ router.post("/refresh-token", refreshTokenLimiter, async (req, res) => {
 
     await RefreshToken.updateMany(
       { userId: user._id, revoked: false },
-      { revoked: true }
+      { revoked: true },
     );
 
     const accessToken = signAccessToken(user);
@@ -182,11 +182,18 @@ router.post("/refresh-token", refreshTokenLimiter, async (req, res) => {
   } catch (error) {
     console.error("Refresh token error:", error);
 
-    if (error.name === "TokenExpiredError" || error.name === "JsonWebTokenError") {
-      return res.status(403).json({ error: "Invalid or expired refresh token." });
+    if (
+      error.name === "TokenExpiredError" ||
+      error.name === "JsonWebTokenError"
+    ) {
+      return res
+        .status(403)
+        .json({ error: "Invalid or expired refresh token." });
     }
 
-    return res.status(500).json({ error: "Server error during token refresh." });
+    return res
+      .status(500)
+      .json({ error: "Server error during token refresh." });
   }
 });
 
@@ -225,7 +232,9 @@ router.post("/register", authLimiter, async (req, res) => {
     }
 
     if (!isValidPhone(phone)) {
-      return res.status(400).json({ error: "Phone must be a valid 10-digit number." });
+      return res
+        .status(400)
+        .json({ error: "Phone must be a valid 10-digit number." });
     }
 
     if (password.length < 8) {
@@ -285,7 +294,9 @@ router.post("/login", authLimiter, async (req, res) => {
     const password = req.body.password ?? "";
 
     if (!phone || !password) {
-      return res.status(400).json({ error: "Phone and password are required." });
+      return res
+        .status(400)
+        .json({ error: "Phone and password are required." });
     }
 
     const user = await User.findOne({ phone });
@@ -362,11 +373,15 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     const name = normalizeText(req.body.name);
     const email = normalizeEmail(req.body.email);
     const phone = normalizeText(req.body.phone);
-    const tower = req.body.tower !== undefined ? normalizeText(req.body.tower) : undefined;
-    const flat = req.body.flat !== undefined ? normalizeText(req.body.flat) : undefined;
+    const tower =
+      req.body.tower !== undefined ? normalizeText(req.body.tower) : undefined;
+    const flat =
+      req.body.flat !== undefined ? normalizeText(req.body.flat) : undefined;
 
     if (!name || !email || !phone) {
-      return res.status(400).json({ error: "Name, email and phone are required." });
+      return res
+        .status(400)
+        .json({ error: "Name, email and phone are required." });
     }
 
     if (!isValidEmail(email)) {
@@ -374,7 +389,9 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     }
 
     if (!isValidPhone(phone)) {
-      return res.status(400).json({ error: "Phone must be a valid 10-digit number." });
+      return res
+        .status(400)
+        .json({ error: "Phone must be a valid 10-digit number." });
     }
 
     if (tower !== undefined && !tower) {
@@ -420,7 +437,9 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Profile update error:", error);
-    return res.status(500).json({ error: "Server error while updating profile." });
+    return res
+      .status(500)
+      .json({ error: "Server error while updating profile." });
   }
 });
 router.post("/forgot-password", passwordResetLimiter, async (req, res) => {
@@ -435,7 +454,8 @@ router.post("/forgot-password", passwordResetLimiter, async (req, res) => {
 
     // Always return the same message so attackers can't discover accounts
     const genericMessage = {
-      message: "If an account exists for that email, a reset code has been sent.",
+      message:
+        "If an account exists for that email, a reset code has been sent.",
     };
 
     if (!user) {
@@ -482,11 +502,7 @@ router.post("/reset-password", passwordResetLimiter, async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    if (
-      !user ||
-      !user.passwordResetCodeHash ||
-      !user.passwordResetExpiresAt
-    ) {
+    if (!user || !user.passwordResetCodeHash || !user.passwordResetExpiresAt) {
       return res.status(400).json({ error: "Invalid or expired reset code." });
     }
 
@@ -516,7 +532,7 @@ router.post("/reset-password", passwordResetLimiter, async (req, res) => {
 
     await RefreshToken.updateMany(
       { userId: user._id, revoked: false },
-      { revoked: true }
+      { revoked: true },
     );
 
     return res.status(200).json({
@@ -527,7 +543,6 @@ router.post("/reset-password", passwordResetLimiter, async (req, res) => {
     return res.status(500).json({ error: "Could not reset password." });
   }
 });
-
 
 export default router;
 export { authLimiter, authenticateToken };
