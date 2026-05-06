@@ -134,7 +134,7 @@ router.post("/support", authenticateToken, supportLimiter, async (req, res) => {
 
     // ── Fire email alert (non-blocking — don't fail the request if email fails) ──
     const User = (await import("../models/User.js")).default;
-    const user = await User.findById(req.user.id).select("name phone email tower flat").lean();
+    const user = await User.findById(req.user.id).select("name phone email society tower flat").lean();
 
     sendSupportAlert(ticket, order, user).catch((err) =>
       console.error("Support email failed (ticket still saved):", err)

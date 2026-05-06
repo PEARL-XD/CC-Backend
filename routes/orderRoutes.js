@@ -190,7 +190,7 @@ router.get("/admin/orders", authenticateToken, async (req, res) => {
     }
 
     const orders = await Order.find()
-      .populate("user", "name phone email tower flat")
+.populate("user", "name phone email society tower flat")
       .sort({ createdAt: -1 });
 
     res.json({ orders });

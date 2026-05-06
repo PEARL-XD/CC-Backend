@@ -29,6 +29,12 @@ const refreshTokenLimiter = rateLimit({
   message: { error: "Too many refresh token requests. Try again later." },
 });
 
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: "Too many reset attempts. Please try again later." },
+});
+
 const refreshCookieOptions = {
   httpOnly: true,
   secure: isProduction,
@@ -40,48 +46,6 @@ const refreshCookieOptions = {
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
-
-const passwordResetLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  message: { error: "Too many reset attempts. Please try again later." },
-});
-
-function generateResetCode() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-function hashResetCode(code) {
-  return crypto.createHash("sha256").update(code).digest("hex");
-}
-
-async function sendPasswordResetEmail({ to, name, code }) {
-  if (!resend) {
-    throw new Error("RESEND_API_KEY is not configured.");
-  }
-
-  const { error } = await resend.emails.send({
-    from: process.env.RESEND_FROM_EMAIL,
-    to: [to],
-    subject: "Your CleanChops password reset code",
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-        <h2>Reset your password</h2>
-        <p>Hi ${name || "there"},</p>
-        <p>Use this code to reset your CleanChops password:</p>
-        <div style="font-size: 28px; font-weight: bold; letter-spacing: 6px; margin: 16px 0;">
-          ${code}
-        </div>
-        <p>This code expires in 15 minutes.</p>
-        <p>If you did not request this, you can ignore this email.</p>
-      </div>
-    `,
-  });
-
-  if (error) {
-    throw new Error(error.message || "Failed to send reset email.");
-  }
-}
 
 function buildTokenPayload(user) {
   return {
@@ -126,6 +90,42 @@ function getRefreshTokenFromRequest(req) {
   return req.cookies?.refreshToken || req.body?.refreshToken;
 }
 
+function generateResetCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function hashResetCode(code) {
+  return crypto.createHash("sha256").update(code).digest("hex");
+}
+
+async function sendPasswordResetEmail({ to, name, code }) {
+  if (!resend) {
+    throw new Error("RESEND_API_KEY is not configured.");
+  }
+
+  const { error } = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL,
+    to: [to],
+    subject: "Your CleanChops password reset code",
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <h2>Reset your password</h2>
+        <p>Hi ${name || "there"},</p>
+        <p>Use this code to reset your CleanChops password:</p>
+        <div style="font-size: 28px; font-weight: bold; letter-spacing: 6px; margin: 16px 0;">
+          ${code}
+        </div>
+        <p>This code expires in 15 minutes.</p>
+        <p>If you did not request this, you can ignore this email.</p>
+      </div>
+    `,
+  });
+
+  if (error) {
+    throw new Error(error.message || "Failed to send reset email.");
+  }
+}
+
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader?.split(" ")[1];
@@ -138,7 +138,7 @@ const authenticateToken = async (req, res, next) => {
     const payload = await verifyAsync(token, process.env.ACCESS_TOKEN_SECRET);
     req.user = payload;
     next();
-  } catch (err) {
+  } catch (_) {
     return res.status(401).json({ error: "Invalid or expired access token." });
   }
 };
@@ -220,11 +220,11 @@ router.post("/register", authLimiter, async (req, res) => {
     const email = normalizeEmail(req.body.email);
     const phone = normalizeText(req.body.phone);
     const password = req.body.password ?? "";
+    const society = normalizeText(req.body.society);
     const tower = normalizeText(req.body.tower);
     const flat = normalizeText(req.body.flat);
-    const society = normalizeText(req.body.society);
 
-    if (!name || !email || !phone || !password || !tower || !flat || !society) {
+    if (!name || !email || !phone || !password || !society || !tower || !flat) {
       return res.status(400).json({ error: "All fields are required." });
     }
 
@@ -279,6 +279,7 @@ router.post("/register", authLimiter, async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        society: user.society,
         tower: user.tower,
         flat: user.flat,
       },
@@ -334,6 +335,7 @@ router.post("/login", authLimiter, async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        society: user.society,
         tower: user.tower,
         flat: user.flat,
       },
@@ -375,6 +377,8 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     const name = normalizeText(req.body.name);
     const email = normalizeEmail(req.body.email);
     const phone = normalizeText(req.body.phone);
+    const society =
+      req.body.society !== undefined ? normalizeText(req.body.society) : undefined;
     const tower =
       req.body.tower !== undefined ? normalizeText(req.body.tower) : undefined;
     const flat =
@@ -394,6 +398,10 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
       return res
         .status(400)
         .json({ error: "Phone must be a valid 10-digit number." });
+    }
+
+    if (society !== undefined && !society) {
+      return res.status(400).json({ error: "Society cannot be empty." });
     }
 
     if (tower !== undefined && !tower) {
@@ -421,6 +429,7 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     }
 
     const updates = { name, email, phone };
+    if (society !== undefined) updates.society = society;
     if (tower !== undefined) updates.tower = tower;
     if (flat !== undefined) updates.flat = flat;
 
@@ -444,9 +453,11 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
       .json({ error: "Server error while updating profile." });
   }
 });
+
+// POST /forgot-password
 router.post("/forgot-password", passwordResetLimiter, async (req, res) => {
   try {
-    const email = req.body.email?.trim().toLowerCase();
+    const email = normalizeEmail(req.body.email);
 
     if (!email) {
       return res.status(400).json({ error: "Email is required." });
@@ -454,7 +465,6 @@ router.post("/forgot-password", passwordResetLimiter, async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    // Always return the same message so attackers can't discover accounts
     const genericMessage = {
       message:
         "If an account exists for that email, a reset code has been sent.",
@@ -484,10 +494,11 @@ router.post("/forgot-password", passwordResetLimiter, async (req, res) => {
   }
 });
 
+// POST /reset-password
 router.post("/reset-password", passwordResetLimiter, async (req, res) => {
   try {
-    const email = req.body.email?.trim().toLowerCase();
-    const code = req.body.code?.trim();
+    const email = normalizeEmail(req.body.email);
+    const code = normalizeText(req.body.code);
     const newPassword = req.body.newPassword ?? "";
 
     if (!email || !code || !newPassword) {
