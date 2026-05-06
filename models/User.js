@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema(
     passwordHash: { type: String, required: true },
     tower: { type: String, required: true },
     flat: { type: String, required: true },
+    society: { type: String, required: true },
     passwordResetCodeHash: {
       type: String,
       default: null,

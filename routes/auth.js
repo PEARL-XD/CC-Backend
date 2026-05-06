@@ -222,8 +222,9 @@ router.post("/register", authLimiter, async (req, res) => {
     const password = req.body.password ?? "";
     const tower = normalizeText(req.body.tower);
     const flat = normalizeText(req.body.flat);
+    const society = normalizeText(req.body.society);
 
-    if (!name || !email || !phone || !password || !tower || !flat) {
+    if (!name || !email || !phone || !password || !tower || !flat || !society) {
       return res.status(400).json({ error: "All fields are required." });
     }
 
@@ -264,6 +265,7 @@ router.post("/register", authLimiter, async (req, res) => {
       email,
       phone,
       passwordHash,
+      society,
       tower,
       flat,
     });
