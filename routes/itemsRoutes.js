@@ -87,7 +87,7 @@ router.get("/items", async (req, res) => {
     // Find items and project only required fields
     const items = await Item.find()
       .select(
-        "_id name desc longdesc imgUrl price oldprice proteinPer100g carbsPer100g caloriesPer100g category"
+        "_id name desc longdesc imgUrl price oldprice proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock"
       )
       .lean();
 
@@ -108,6 +108,7 @@ router.get("/items", async (req, res) => {
         proteinPer100g: it.proteinPer100g,
         carbsPer100g: it.carbsPer100g,
         caloriesPer100g: it.caloriesPer100g,
+        isOutOfStock: Boolean(it.isOutOfStock),
       });
     }
 
@@ -166,7 +167,7 @@ router.get("/items/search", async (req, res) => {
         )
           .sort({ score: { $meta: "textScore" } })
           .limit(SEARCH_LIMIT)
-          .select("_id name price imgUrl desc")
+          .select("_id name price imgUrl desc isOutOfStock")
           .lean();
       } catch (err) {
         // If text search fails (no index or other), we fallback to regex
@@ -183,7 +184,7 @@ router.get("/items/search", async (req, res) => {
         null,
         { limit: SEARCH_LIMIT }
       )
-        .select("_id name price imgUrl desc")
+        .select("_id name price imgUrl desc isOutOfStock")
         .lean();
     }
 
@@ -194,6 +195,7 @@ router.get("/items/search", async (req, res) => {
       price: it.price,
       img: chooseImageUrl(it.imgUrl),
       desc: it.desc || "",
+      isOutOfStock: Boolean(it.isOutOfStock),
     }));
 
     setCache(cacheKey, normalized);
@@ -219,7 +221,7 @@ router.get("/items/:id", async (req, res) => {
 
     const item = await Item.findById(id)
       .select(
-        "_id name desc longdesc imgUrl price oldprice proteinPer100g carbsPer100g caloriesPer100g category"
+        "_id name desc longdesc imgUrl price oldprice proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock"
       )
       .lean();
 
@@ -237,6 +239,7 @@ router.get("/items/:id", async (req, res) => {
       carbsPer100g: item.carbsPer100g,
       caloriesPer100g: item.caloriesPer100g,
       category: item.category,
+      isOutOfStock: Boolean(item.isOutOfStock),
     });
   } catch (err) {
     console.error("GET /items/:id error:", err);

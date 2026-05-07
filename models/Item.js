@@ -8,9 +8,10 @@ const itemSchema = new mongoose.Schema({
   price: { type: Number },
   oldprice: { type: Number },
   imgUrl: { type: String },
-  proteinPer100g:{type: String},
-  carbsPer100g:{type: String},
-  caloriesPer100g:{type: String}
+  proteinPer100g: { type: String },
+  carbsPer100g: { type: String },
+  caloriesPer100g: { type: String },
+  isOutOfStock: { type: Boolean, default: false },
 });
 
 const Item = mongoose.model("Item", itemSchema);
