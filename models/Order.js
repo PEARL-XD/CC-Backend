@@ -3,11 +3,11 @@ import mongoose from "mongoose";
 
 const orderItemSchema = new mongoose.Schema(
   {
-    _id: { type: String, required: true }, // product id
+    _id: { type: String, required: true },
     name: { type: String, required: true },
     img: { type: String },
-    price: { type: Number, required: true }, // final price per item
-    selectedSize: { type: Number, required: true }, // grams
+    price: { type: Number, required: true },
+    selectedSize: { type: Number, required: true },
     quantity: { type: Number, required: true },
   },
   { _id: false },
@@ -17,12 +17,12 @@ const orderSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     items: { type: [orderItemSchema], required: true },
-    schedule: { type: String }, // e.g. "Evening 6-8 PM"
-    totalAmount: { type: Number, required: true }, // in INR (not paise)
+    schedule: { type: String },
+    totalAmount: { type: Number, required: true },
     razorpayOrderId: { type: String },
     paymentStatus: {
       type: String,
-      enum: ["PENDING", "PAID", "FAILED"],
+      enum: ["PENDING", "PAID", "FAILED", "CANCELLED"],
       default: "PENDING",
     },
     orderStatus: {
