@@ -42,15 +42,15 @@ const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
 
 /**
  * POST /api/orders/create
- * Body: { cartItems: [{ _id, quantity, selectedSize }], schedule?: string }
+ * Body: { cartItems: [{ _id, quantity, selectedSize }], schedule?: string, silentDelivery?: boolean }
  * Auth: user
- *
- * Prices are fetched from the DB — never trusted from the client.
  */
 router.post("/orders/create", authenticateToken, async (req, res) => {
   try {
-    const { cartItems, schedule } = req.body;
-    if (!Array.isArray(cartItems) || cartItems.length === 0) {
+const { cartItems, schedule } = req.body;
+
+const silentDelivery =
+  req.body.silentDelivery === true || req.body.silentDelivery === "true";    if (!Array.isArray(cartItems) || cartItems.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
     }
 
@@ -112,6 +112,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       razorpayOrderId: razorpayOrder.id,
       paymentStatus: "PENDING",
       orderStatus: "PLACED",
+      silentDelivery,
       statusTimeline: [{ status: "PLACED", time: new Date() }],
     });
 

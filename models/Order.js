@@ -18,6 +18,10 @@ const orderSchema = new mongoose.Schema(
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     items: { type: [orderItemSchema], required: true },
     schedule: { type: String },
+    silentDelivery: {
+      type: Boolean,
+      default: false,
+    },
     totalAmount: { type: Number, required: true },
     razorpayOrderId: { type: String },
     paymentStatus: {
@@ -46,5 +50,3 @@ const orderSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
-
-export const Order = mongoose.model("Order", orderSchema);
