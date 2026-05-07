@@ -23,6 +23,20 @@ const isAdmin = async (req) => {
   const user = await User.findById(req.user.id).select("role").lean();
   return user?.role === "admin";
 };
+const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
+  order.paymentStatus = paymentStatus;
+  order.orderStatus = "CANCELLED";
+
+  const alreadyCancelled = order.statusTimeline?.some(
+    (entry) => entry.status === "CANCELLED",
+  );
+
+  if (!alreadyCancelled) {
+    order.statusTimeline.push({ status: "CANCELLED", time: new Date() });
+  }
+
+  await order.save();
+};
 
 /* ---------------- ROUTES ---------------- */
 
@@ -43,24 +57,30 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     // Fetch all products in one query
     const productIds = cartItems.map((i) => i._id);
     const products = await Item.find({ _id: { $in: productIds } }).lean();
-    const productMap = Object.fromEntries(products.map((p) => [p._id.toString(), p]));
+    const productMap = Object.fromEntries(
+      products.map((p) => [p._id.toString(), p]),
+    );
 
     // Validate every item and build the verified order items array
     const verifiedItems = [];
     for (const item of cartItems) {
       const product = productMap[item._id?.toString()];
       if (!product) {
-        return res.status(400).json({ error: `Product not found: ${item._id}` });
+        return res
+          .status(400)
+          .json({ error: `Product not found: ${item._id}` });
       }
       const quantity = Number(item.quantity);
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
-        return res.status(400).json({ error: `Invalid quantity for ${product.name}` });
+        return res
+          .status(400)
+          .json({ error: `Invalid quantity for ${product.name}` });
       }
       verifiedItems.push({
         _id: product._id,
-        name: product.name,       // ← from DB
-        img: product.imgUrl,         // ← from DB
-        price: product.price,     // ← from DB, never item.price
+        name: product.name, // ← from DB
+        img: product.imgUrl, // ← from DB
+        price: product.price, // ← from DB, never item.price
         selectedSize: Number(item.selectedSize),
         quantity,
       });
@@ -69,7 +89,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     // Calculate total server-side from verified prices
     const totalAmount = verifiedItems.reduce(
       (sum, item) => sum + item.price * item.quantity,
-      0
+      0,
     );
 
     if (totalAmount <= 0) {
@@ -123,45 +143,97 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
       razorpay_signature,
     } = req.body;
 
-    if (!localOrderId || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    if (
+      !localOrderId ||
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature
+    ) {
       return res.status(400).json({ error: "Missing payment details" });
     }
 
     const order = await Order.findById(localOrderId);
     if (!order) return res.status(404).json({ error: "Order not found" });
-
-    // Ownership check — prevent one user verifying another user's order
+    if (order.paymentStatus !== "PAID" && status !== "CANCELLED") {
+      return res.status(400).json({
+        error: "Only paid orders can move to fulfillment statuses.",
+      });
+    }
     if (order.user.toString() !== req.user.id) {
       return res.status(403).json({ error: "Forbidden" });
     }
 
-    // Idempotency guard — don't process an already-paid order twice
     if (order.paymentStatus === "PAID") {
       return res.status(409).json({ error: "Order already verified" });
     }
 
-    // Verify Razorpay signature
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(body)
       .digest("hex");
 
     if (expectedSignature !== razorpay_signature) {
-      order.paymentStatus = "FAILED";
-      await order.save();
+      await cancelOrderForPaymentIssue(order, "FAILED");
       return res.status(400).json({ error: "Invalid payment signature" });
     }
 
     order.paymentStatus = "PAID";
     order.orderStatus = "CONFIRMED";
-    order.statusTimeline.push({ status: "CONFIRMED", time: new Date() });
+
+    const alreadyConfirmed = order.statusTimeline?.some(
+      (entry) => entry.status === "CONFIRMED",
+    );
+
+    if (!alreadyConfirmed) {
+      order.statusTimeline.push({ status: "CONFIRMED", time: new Date() });
+    }
+
     await order.save();
 
     res.json({ success: true, message: "Payment verified", order });
   } catch (err) {
     console.error("Verify payment error:", err);
     res.status(500).json({ error: "Failed to verify payment" });
+  }
+});
+// Added a new route for failed/dismissed payments
+router.post("/orders/payment-failed", authenticateToken, async (req, res) => {
+  try {
+    const { localOrderId, paymentStatus } = req.body;
+
+    if (!localOrderId) {
+      return res.status(400).json({ error: "localOrderId is required" });
+    }
+
+    const allowedStatuses = ["FAILED", "CANCELLED"];
+    const finalPaymentStatus = allowedStatuses.includes(paymentStatus)
+      ? paymentStatus
+      : "FAILED";
+
+    const order = await Order.findById(localOrderId);
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    if (order.user.toString() !== req.user.id) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    if (order.paymentStatus === "PAID") {
+      return res.status(409).json({ error: "Paid orders cannot be cancelled" });
+    }
+
+    await cancelOrderForPaymentIssue(order, finalPaymentStatus);
+
+    res.json({
+      success: true,
+      message: `Order marked as ${finalPaymentStatus}`,
+      order,
+    });
+  } catch (err) {
+    console.error("Payment failure update error:", err);
+    res.status(500).json({ error: "Failed to update payment status" });
   }
 });
 
@@ -171,7 +243,9 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
  */
 router.get("/orders/me", authenticateToken, async (req, res) => {
   try {
-    const orders = await Order.find({ user: req.user.id }).sort({ createdAt: -1 });
+    const orders = await Order.find({ user: req.user.id }).sort({
+      createdAt: -1,
+    });
     res.json({ orders });
   } catch (err) {
     console.error("Fetch my-orders error:", err);
@@ -190,7 +264,7 @@ router.get("/admin/orders", authenticateToken, async (req, res) => {
     }
 
     const orders = await Order.find()
-.populate("user", "name phone email society tower flat")
+      .populate("user", "name phone email society tower flat")
       .sort({ createdAt: -1 });
 
     res.json({ orders });
@@ -205,32 +279,43 @@ router.get("/admin/orders", authenticateToken, async (req, res) => {
  * Body: { status }
  * Auth: admin (role-based)
  */
-router.patch("/admin/orders/:id/status", authenticateToken, async (req, res) => {
-  try {
-    if (!(await isAdmin(req))) {
-      return res.status(403).json({ error: "Admin access only" });
+router.patch(
+  "/admin/orders/:id/status",
+  authenticateToken,
+  async (req, res) => {
+    try {
+      if (!(await isAdmin(req))) {
+        return res.status(403).json({ error: "Admin access only" });
+      }
+
+      const { status } = req.body;
+      const allowed = [
+        "PLACED",
+        "CONFIRMED",
+        "PACKED",
+        "OUT_FOR_DELIVERY",
+        "DELIVERED",
+        "CANCELLED",
+      ];
+
+      if (!allowed.includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      // Single null check, in the right place — before any mutations
+      const order = await Order.findById(req.params.id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+
+      order.orderStatus = status;
+      order.statusTimeline.push({ status, time: new Date() });
+      await order.save();
+
+      res.json({ success: true, order });
+    } catch (err) {
+      console.error("Update order status error:", err);
+      res.status(500).json({ error: "Failed to update order status" });
     }
-
-    const { status } = req.body;
-    const allowed = ["PLACED", "CONFIRMED", "PACKED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"];
-
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ error: "Invalid status" });
-    }
-
-    // Single null check, in the right place — before any mutations
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ error: "Order not found" });
-
-    order.orderStatus = status;
-    order.statusTimeline.push({ status, time: new Date() });
-    await order.save();
-
-    res.json({ success: true, order });
-  } catch (err) {
-    console.error("Update order status error:", err);
-    res.status(500).json({ error: "Failed to update order status" });
-  }
-});
+  },
+);
 
 export default router;
