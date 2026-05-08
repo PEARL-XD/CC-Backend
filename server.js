@@ -14,6 +14,7 @@ import cartRoutes from "./routes/cartRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import RefreshToken from "./models/RefreshToken.js";
 import supportRoutes from "./routes/support.js";
+import adminInventoryRoutes from "./routes/adminInventoryRoutes.js";
 const app = express();
 
 /* =======================
@@ -52,12 +53,7 @@ mongoose
    ROUTES
 ======================= */
 
-app.use("/api", authRouter, supportRoutes,itemsRouter,cartRoutes,orderRoutes);
-// app.use("/api", itemsRouter);
-// app.use("/api", cartRoutes);
-// app.use("/api", orderRoutes);
-// app.use("/api", supportRoutes);
-
+app.use("/api", authRouter, supportRoutes,itemsRouter,cartRoutes,orderRoutes,adminInventoryRoutes);
 app.get("/", (req, res) => {
   res.send("CleanCuts backend running");
 });

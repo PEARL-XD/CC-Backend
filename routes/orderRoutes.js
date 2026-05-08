@@ -4,6 +4,7 @@ import { razorpay } from "../config/razorpay.js";
 import { Order } from "../models/Order.js";
 import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
+import storefrontSettings from "../models/StorefrontSettings.js";
 
 const router = express.Router();
 
@@ -57,6 +58,11 @@ const silentDelivery =
     // Fetch all products in one query
     const productIds = cartItems.map((i) => i._id);
     const products = await Item.find({ _id: { $in: productIds } }).lean();
+    const settings = await StorefrontSettings.findOne({
+  key: "storefront",
+}).lean();
+
+const cookedEnabled = settings?.cookedEnabled ?? true;
     const productMap = Object.fromEntries(
       products.map((p) => [p._id.toString(), p]),
     );
@@ -70,6 +76,20 @@ const silentDelivery =
           .status(400)
           .json({ error: `Product not found: ${item._id}` });
       }
+      if (product.isOutOfStock === true) {
+  return res.status(400).json({
+    error: `${product.name} is currently out of stock`,
+  });
+}
+
+const isCooked =
+  String(product.category || "").trim().toLowerCase() === "cooked";
+
+if (isCooked && !cookedEnabled) {
+  return res.status(400).json({
+    error: "Cooked food is coming soon to your society.",
+  });
+}
       const quantity = Number(item.quantity);
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
         return res

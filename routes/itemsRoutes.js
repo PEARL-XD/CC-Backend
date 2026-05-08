@@ -48,7 +48,11 @@ function clearCache(prefix = "") {
     if (key.startsWith(prefix)) cache.delete(key);
   }
 }
-
+export function clearItemsCache() {
+  clearCache("items:");
+  clearCache("search:");
+  cache.clear();
+}
 function safeRegex(q) {
   return q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -250,9 +254,7 @@ router.get("/items/:id", async (req, res) => {
 });
 
 router.post("/items/clear-cache", (req, res) => {
-  clearCache("items:");
-  clearCache("search:");
-  cache.clear();
+  clearItemsCache();
   res.json({ ok: true });
 });
 
