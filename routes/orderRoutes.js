@@ -4,7 +4,7 @@ import { razorpay } from "../config/razorpay.js";
 import { Order } from "../models/Order.js";
 import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
-import storefrontSettings from "../models/StorefrontSettings.js";
+import StorefrontSettings from "../models/StorefrontSettings.js";
 
 const router = express.Router();
 
@@ -48,68 +48,84 @@ const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
  */
 router.post("/orders/create", authenticateToken, async (req, res) => {
   try {
-const { cartItems, schedule } = req.body;
+    const { cartItems, schedule } = req.body;
 
-const silentDelivery =
-  req.body.silentDelivery === true || req.body.silentDelivery === "true";    if (!Array.isArray(cartItems) || cartItems.length === 0) {
+    const silentDelivery =
+      req.body.silentDelivery === true || req.body.silentDelivery === "true";
+
+    if (!Array.isArray(cartItems) || cartItems.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
     }
 
-    // Fetch all products in one query
     const productIds = cartItems.map((i) => i._id);
     const products = await Item.find({ _id: { $in: productIds } }).lean();
-    const settings = await StorefrontSettings.findOne({
-  key: "storefront",
-}).lean();
 
-const cookedEnabled = settings?.cookedEnabled ?? true;
+    const settings = await StorefrontSettings.findOne({
+      key: "storefront",
+    }).lean();
+
+    const cookedEnabled = settings?.cookedEnabled ?? true;
+
     const productMap = Object.fromEntries(
-      products.map((p) => [p._id.toString(), p]),
+      products.map((p) => [p._id.toString(), p])
     );
 
-    // Validate every item and build the verified order items array
     const verifiedItems = [];
+
     for (const item of cartItems) {
       const product = productMap[item._id?.toString()];
+
       if (!product) {
-        return res
-          .status(400)
-          .json({ error: `Product not found: ${item._id}` });
+        return res.status(400).json({
+          error: `Product not found: ${item._id}`,
+        });
       }
+
       if (product.isOutOfStock === true) {
-  return res.status(400).json({
-    error: `${product.name} is currently out of stock`,
-  });
-}
-
-const isCooked =
-  String(product.category || "").trim().toLowerCase() === "cooked";
-
-if (isCooked && !cookedEnabled) {
-  return res.status(400).json({
-    error: "Cooked food is coming soon to your society.",
-  });
-}
-      const quantity = Number(item.quantity);
-      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
-        return res
-          .status(400)
-          .json({ error: `Invalid quantity for ${product.name}` });
+        return res.status(400).json({
+          error: `${product.name} is currently out of stock`,
+        });
       }
+
+      const isCooked =
+        String(product.category || "").trim().toLowerCase() === "cooked";
+
+      if (isCooked && !cookedEnabled) {
+        return res.status(400).json({
+          error: "Cooked food is coming soon to your society.",
+        });
+      }
+
+      const selectedSize = Number(item.selectedSize);
+      const quantity = Number(item.quantity);
+
+      if (![250, 500, 750, 1000].includes(selectedSize)) {
+        return res.status(400).json({
+          error: `Invalid size for ${product.name}`,
+        });
+      }
+
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+        return res.status(400).json({
+          error: `Invalid quantity for ${product.name}`,
+        });
+      }
+
+      const unitPrice = (Number(product.price) || 0) * selectedSize / 1000;
+
       verifiedItems.push({
         _id: product._id,
-        name: product.name, // ← from DB
-        img: product.imgUrl, // ← from DB
-        price: product.price, // ← from DB, never item.price
-        selectedSize: Number(item.selectedSize),
+        name: product.name,
+        img: product.imgUrl,
+        price: unitPrice,
+        selectedSize,
         quantity,
       });
     }
 
-    // Calculate total server-side from verified prices
     const totalAmount = verifiedItems.reduce(
       (sum, item) => sum + item.price * item.quantity,
-      0,
+      0
     );
 
     if (totalAmount <= 0) {
@@ -136,7 +152,7 @@ if (isCooked && !cookedEnabled) {
       statusTimeline: [{ status: "PLACED", time: new Date() }],
     });
 
-    res.json({
+    return res.json({
       success: true,
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
       amount: amountInPaise,
@@ -146,9 +162,10 @@ if (isCooked && !cookedEnabled) {
     });
   } catch (err) {
     console.error("Create order error:", err);
-    res.status(500).json({ error: "Failed to create order" });
+    return res.status(500).json({ error: "Failed to create order" });
   }
 });
+
 
 /**
  * POST /api/orders/verify
@@ -175,11 +192,6 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
 
     const order = await Order.findById(localOrderId);
     if (!order) return res.status(404).json({ error: "Order not found" });
-    if (order.paymentStatus !== "PAID" && status !== "CANCELLED") {
-      return res.status(400).json({
-        error: "Only paid orders can move to fulfillment statuses.",
-      });
-    }
     if (order.user.toString() !== req.user.id) {
       return res.status(403).json({ error: "Forbidden" });
     }

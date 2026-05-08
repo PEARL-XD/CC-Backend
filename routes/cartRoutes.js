@@ -2,6 +2,7 @@ import express from "express";
 import { authenticateToken, authLimiter } from "./auth.js";
 import Cart from "../models/Cart.js";
 import Item from "../models/Item.js"; // ← needed to verify price server-side
+import StorefrontSettings from "../models/StorefrontSettings.js";
 const router = express.Router();
 router.use(authLimiter);
 
@@ -53,18 +54,44 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
   try {
     const { _id, selectedSize, quantity = 1 } = req.body;
 
-    // 1. Validate input shape and quantity bounds
-    if (!validateItemInput(res, { _id, selectedSize: Number(selectedSize), quantity })) return;
+    const normalizedSize = Number(selectedSize);
+    const qty = Number(quantity);
 
-    // 2. Fetch canonical product data — never trust client-supplied price/name
+    if (!validateItemInput(res, { _id, selectedSize: normalizedSize, quantity })) {
+      return;
+    }
+
+    if (![250, 500, 750, 1000].includes(normalizedSize)) {
+      return res.status(400).json({ error: "Invalid selected size" });
+    }
+
     const product = await Item.findById(_id).lean();
     if (!product) return res.status(404).json({ error: "Product not found" });
+
+    if (product.isOutOfStock === true) {
+      return res.status(400).json({
+        error: `${product.name} is currently out of stock`,
+      });
+    }
+
+    const settings = await StorefrontSettings.findOne({
+      key: "storefront",
+    }).lean();
+
+    const cookedEnabled = settings?.cookedEnabled ?? true;
+    const isCooked =
+      String(product.category || "").trim().toLowerCase() === "cooked";
+
+    if (isCooked && !cookedEnabled) {
+      return res.status(400).json({
+        error: "Cooked food is coming soon to your society.",
+      });
+    }
 
     const userId = req.user.id;
     const cart = await getCart(userId);
 
-    const normalizedSize = Number(selectedSize);
-    const qty = Number(quantity);
+    const unitPrice = (Number(product.price) || 0) * normalizedSize / 1000;
 
     const idx = cart.items.findIndex(
       (i) => i._id.toString() === _id && i.selectedSize === normalizedSize
@@ -72,32 +99,40 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
 
     if (idx !== -1) {
       const newQty = cart.items[idx].quantity + qty;
+
       if (newQty > MAX_QUANTITY) {
-        return res.status(400).json({ error: `Cannot exceed ${MAX_QUANTITY} of the same item` });
+        return res.status(400).json({
+          error: `Cannot exceed ${MAX_QUANTITY} of the same item`,
+        });
       }
+
       cart.items[idx].quantity = newQty;
+      cart.items[idx].price = unitPrice;
+      cart.items[idx].name = product.name;
+      cart.items[idx].img = product.imgUrl;
     } else {
-      // 3. Guard cart size
       if (cart.items.length >= CART_ITEM_LIMIT) {
         return res.status(400).json({ error: "Cart limit reached" });
       }
+
       cart.items.push({
         _id,
         selectedSize: normalizedSize,
         quantity: qty,
-        price: product.price,   // ← from DB, not req.body
-        name: product.name,     // ← from DB, not req.body
-        img: product.imgUrl,       // ← from DB, not req.body
+        price: unitPrice,
+        name: product.name,
+        img: product.imgUrl,
       });
     }
 
     await cart.save();
-    res.json({ cart: cart.items });
+    return res.json({ cart: cart.items });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to add item" });
+    return res.status(500).json({ error: "Failed to add item" });
   }
 });
+
 
 // REMOVE ITEM
 router.post("/cart/remove", authenticateToken, async (req, res) => {
