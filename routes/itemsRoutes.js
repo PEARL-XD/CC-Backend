@@ -1,28 +1,20 @@
-// backend/routes/itemsRouter.js
 import express from "express";
 import rateLimit from "express-rate-limit";
 import mongoose from "mongoose";
 import Item from "../models/Item.js";
+import StorefrontSettings from "../models/StorefrontSettings.js";
 
 const router = express.Router();
 
-// -----------------------
-// Configuration
-// -----------------------
-const ITEMS_REQUEST_LIMIT = 60; // per minute per IP
-const SEARCH_LIMIT = 20; // max results returned for search
-const SEARCH_MIN_LENGTH = 2; // min query length to run search
-const SEARCH_MAX_LENGTH = 80; // max length to protect from abuse
-const CACHE_TTL_MS = 60 * 1000; // 60 seconds simple cache for list/search
+const ITEMS_REQUEST_LIMIT = 60;
+const SEARCH_LIMIT = 20;
+const SEARCH_MIN_LENGTH = 2;
+const SEARCH_MAX_LENGTH = 80;
+const CACHE_TTL_MS = 60 * 1000;
 
-// Fallback placeholder on server public folder (recommended)
 const PUBLIC_PLACEHOLDER = "/images/placeholder.png";
-// Uploaded screenshot path (available inside this environment); used as last-resort fallback
 const UPLOADED_SCREENSHOT = "/mnt/data/c53e2ca1-42d6-45e6-9cda-47676f31311e.png";
 
-// -----------------------
-// Rate limiter
-// -----------------------
 const itemsLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: ITEMS_REQUEST_LIMIT,
@@ -30,15 +22,13 @@ const itemsLimiter = rateLimit({
 });
 router.use(itemsLimiter);
 
-// -----------------------
-// Simple in-memory cache (TTL)
-// Replace with Redis/memcached for multi-instance deployments
-// -----------------------
 const cache = new Map();
+
 function setCache(key, value, ttl = CACHE_TTL_MS) {
   const expiresAt = Date.now() + ttl;
   cache.set(key, { value, expiresAt });
 }
+
 function getCache(key) {
   const entry = cache.get(key);
   if (!entry) return null;
@@ -48,6 +38,7 @@ function getCache(key) {
   }
   return entry.value;
 }
+
 function clearCache(prefix = "") {
   if (!prefix) {
     cache.clear();
@@ -58,23 +49,26 @@ function clearCache(prefix = "") {
   }
 }
 
-// -----------------------
-// Helpers
-// -----------------------
 function safeRegex(q) {
   return q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
 function chooseImageUrl(itemImg) {
-  // Prefer explicit item image, then public placeholder, then uploaded screenshot (session-only)
   if (itemImg && typeof itemImg === "string") return itemImg;
-  // Use public placeholder if file present in your deployed public folder
   return PUBLIC_PLACEHOLDER || UPLOADED_SCREENSHOT;
 }
 
-// -----------------------
-// 1) GET /api/items
-// - returns items grouped by category (cached)
-// -----------------------
+async function getStorefrontSettings() {
+  const settings = await StorefrontSettings.findOne({ key: "storefront" }).lean();
+  return {
+    cookedEnabled: settings?.cookedEnabled ?? true,
+  };
+}
+
+function isCookedCategory(category) {
+  return String(category || "").trim().toLowerCase() === "cooked";
+}
+
 router.get("/items", async (req, res) => {
   try {
     const cacheKey = "items:all";
@@ -84,18 +78,21 @@ router.get("/items", async (req, res) => {
       return res.json(cached);
     }
 
-    // Find items and project only required fields
+    const settings = await getStorefrontSettings();
+
     const items = await Item.find()
       .select(
         "_id name desc longdesc imgUrl price oldprice proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock"
       )
       .lean();
 
-    // Group by category
     const categoryMap = new Map();
+
     for (const it of items) {
       const img = chooseImageUrl(it.imgUrl);
       const category = it.category || "Uncategorized";
+      const sectionDisabled = isCookedCategory(category) && !settings.cookedEnabled;
+
       if (!categoryMap.has(category)) categoryMap.set(category, []);
       categoryMap.get(category).push({
         _id: it._id,
@@ -109,14 +106,22 @@ router.get("/items", async (req, res) => {
         carbsPer100g: it.carbsPer100g,
         caloriesPer100g: it.caloriesPer100g,
         isOutOfStock: Boolean(it.isOutOfStock),
+        isCategoryDisabled: sectionDisabled,
+        isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
       });
     }
 
     const sections = [];
     for (const [category, articles] of categoryMap.entries()) {
+      const sectionDisabled = isCookedCategory(category) && !settings.cookedEnabled;
+
       sections.push({
         title: category,
         image: category === "Uncooked" ? "/images/raw.png" : "/images/cooked.png",
+        isDisabled: sectionDisabled,
+        disabledReason: sectionDisabled
+          ? "Cooked section is not available right now."
+          : "",
         articles,
       });
     }
@@ -130,13 +135,6 @@ router.get("/items", async (req, res) => {
   }
 });
 
-// -----------------------
-// 2) GET /api/items/search?q=...
-// - Must be before /items/:id
-// - Uses text search if index present, otherwise regex fallback
-// - Sanitizes & limits input for safety
-// - Caches results for a short TTL
-// -----------------------
 router.get("/items/search", async (req, res) => {
   try {
     const rawQ = String(req.query.q || "").trim();
@@ -146,6 +144,8 @@ router.get("/items/search", async (req, res) => {
     if (rawQ.length > SEARCH_MAX_LENGTH) {
       return res.status(400).json({ error: "Search query too long" });
     }
+
+    const settings = await getStorefrontSettings();
 
     const cacheKey = `search:${rawQ.toLowerCase()}`;
     const cached = getCache(cacheKey);
@@ -157,25 +157,19 @@ router.get("/items/search", async (req, res) => {
     const q = rawQ;
     let results = [];
 
-    // Try text search (requires text index on fields like name, desc)
-    const useTextSearch = true;
-    if (useTextSearch) {
-      try {
-        results = await Item.find(
-          { $text: { $search: q } },
-          { score: { $meta: "textScore" } }
-        )
-          .sort({ score: { $meta: "textScore" } })
-          .limit(SEARCH_LIMIT)
-          .select("_id name price imgUrl desc isOutOfStock")
-          .lean();
-      } catch (err) {
-        // If text search fails (no index or other), we fallback to regex
-        results = [];
-      }
+    try {
+      results = await Item.find(
+        { $text: { $search: q } },
+        { score: { $meta: "textScore" } }
+      )
+        .sort({ score: { $meta: "textScore" } })
+        .limit(SEARCH_LIMIT)
+        .select("_id name price imgUrl desc category isOutOfStock")
+        .lean();
+    } catch (_) {
+      results = [];
     }
 
-    // Fallback to safe regex search if no results from text or text search failed
     if (!results.length) {
       const escaped = safeRegex(q);
       const re = new RegExp(escaped, "i");
@@ -184,19 +178,25 @@ router.get("/items/search", async (req, res) => {
         null,
         { limit: SEARCH_LIMIT }
       )
-        .select("_id name price imgUrl desc isOutOfStock")
+        .select("_id name price imgUrl desc category isOutOfStock")
         .lean();
     }
 
-    // Normalize shape and images
-    const normalized = results.map((it) => ({
-      _id: it._id,
-      name: it.name,
-      price: it.price,
-      img: chooseImageUrl(it.imgUrl),
-      desc: it.desc || "",
-      isOutOfStock: Boolean(it.isOutOfStock),
-    }));
+    const normalized = results.map((it) => {
+      const sectionDisabled =
+        isCookedCategory(it.category) && !settings.cookedEnabled;
+
+      return {
+        _id: it._id,
+        name: it.name,
+        price: it.price,
+        img: chooseImageUrl(it.imgUrl),
+        desc: it.desc || "",
+        isOutOfStock: Boolean(it.isOutOfStock),
+        isCategoryDisabled: sectionDisabled,
+        isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
+      };
+    });
 
     setCache(cacheKey, normalized);
     res.set("X-Cache", "MISS");
@@ -207,17 +207,14 @@ router.get("/items/search", async (req, res) => {
   }
 });
 
-// -----------------------
-// 3) GET /api/items/:id
-// - Last route (after /search)
-// - Validates ObjectId before query
-// -----------------------
 router.get("/items/:id", async (req, res) => {
   try {
     const id = req.params.id;
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ error: "Invalid item id" });
     }
+
+    const settings = await getStorefrontSettings();
 
     const item = await Item.findById(id)
       .select(
@@ -226,6 +223,9 @@ router.get("/items/:id", async (req, res) => {
       .lean();
 
     if (!item) return res.status(404).json({ error: "Item not found" });
+
+    const sectionDisabled =
+      isCookedCategory(item.category) && !settings.cookedEnabled;
 
     return res.json({
       _id: item._id,
@@ -240,6 +240,8 @@ router.get("/items/:id", async (req, res) => {
       caloriesPer100g: item.caloriesPer100g,
       category: item.category,
       isOutOfStock: Boolean(item.isOutOfStock),
+      isCategoryDisabled: sectionDisabled,
+      isUnavailable: Boolean(item.isOutOfStock) || sectionDisabled,
     });
   } catch (err) {
     console.error("GET /items/:id error:", err);
@@ -247,12 +249,7 @@ router.get("/items/:id", async (req, res) => {
   }
 });
 
-// -----------------------
-// Optional maintenance endpoints (protected in future)
-// - Clear cache (useful for admin operations after updates)
-// -----------------------
 router.post("/items/clear-cache", (req, res) => {
-  // Warning: this is open now. Secure it with admin auth for production.
   clearCache("items:");
   clearCache("search:");
   cache.clear();
