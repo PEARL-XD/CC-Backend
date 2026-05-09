@@ -5,6 +5,7 @@ import { Order } from "../models/Order.js";
 import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
+import { sendPushToUser } from "../utils/pushNotifications.js";
 
 const router = express.Router();
 
@@ -339,11 +340,30 @@ router.patch(
       const order = await Order.findById(req.params.id);
       if (!order) return res.status(404).json({ error: "Order not found" });
 
+            const previousStatus = order.orderStatus;
+
       order.orderStatus = status;
       order.statusTimeline.push({ status, time: new Date() });
       await order.save();
 
+      if (previousStatus !== "DELIVERED" && status === "DELIVERED") {
+        await sendPushToUser({
+          userId: order.user.toString(),
+          title: "Order delivered",
+          body: order.silentDelivery
+            ? "Your order has been delivered and left at your door."
+            : "Your order has been delivered.",
+          data: {
+            type: "order",
+            route: "/orders",
+            orderId: order._id.toString(),
+            orderStatus: "DELIVERED",
+          },
+        });
+      }
+
       res.json({ success: true, order });
+
     } catch (err) {
       console.error("Update order status error:", err);
       res.status(500).json({ error: "Failed to update order status" });

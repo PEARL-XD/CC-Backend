@@ -1,14 +1,16 @@
 import express from "express";
 import DeviceToken from "../models/DeviceToken.js";
+import User from "../models/User.js";
 import { authenticateToken } from "./auth.js";
+import { sendPromoBroadcast } from "../utils/pushNotifications.js";
 
 const router = express.Router();
 
-/**
- * POST /api/notifications/device-token
- * Body: { token, platform }
- * Auth: user
- */
+const isAdmin = async (req) => {
+  const user = await User.findById(req.user.id).select("role").lean();
+  return user?.role === "admin";
+};
+
 router.post("/notifications/device-token", authenticateToken, async (req, res) => {
   try {
     const token = String(req.body.token || "").trim();
@@ -44,11 +46,6 @@ router.post("/notifications/device-token", authenticateToken, async (req, res) =
   }
 });
 
-/**
- * DELETE /api/notifications/device-token
- * Body: { token }
- * Auth: user
- */
 router.delete("/notifications/device-token", authenticateToken, async (req, res) => {
   try {
     const token = String(req.body.token || "").trim();
@@ -66,6 +63,33 @@ router.delete("/notifications/device-token", authenticateToken, async (req, res)
   } catch (error) {
     console.error("Delete device token error:", error);
     return res.status(500).json({ error: "Failed to remove device token." });
+  }
+});
+
+router.post("/admin/notifications/broadcast", authenticateToken, async (req, res) => {
+  try {
+    if (!(await isAdmin(req))) {
+      return res.status(403).json({ error: "Admin access only" });
+    }
+
+    const title = String(req.body.title || "").trim();
+    const body = String(req.body.body || "").trim();
+    const route = String(req.body.route || "/home").trim();
+
+    if (!title || !body) {
+      return res.status(400).json({ error: "Title and body are required." });
+    }
+
+    const result = await sendPromoBroadcast({ title, body, route });
+
+    return res.json({
+      success: true,
+      message: "Broadcast sent.",
+      result,
+    });
+  } catch (error) {
+    console.error("Broadcast notification error:", error);
+    return res.status(500).json({ error: "Failed to send broadcast." });
   }
 });
 
