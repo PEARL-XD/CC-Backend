@@ -1,5 +1,5 @@
 import express from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { Resend } from "resend";
 import SupportTicket from "../models/SupportTicket.js";
 import { Order } from "../models/Order.js";
@@ -15,7 +15,7 @@ const resend = process.env.RESEND_API_KEY
 const supportLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 5,
-  keyGenerator: (req) => req.user?.id ?? req.ip,
+  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req),
   message: { error: "Too many requests. Please wait before submitting again." },
 });
 
