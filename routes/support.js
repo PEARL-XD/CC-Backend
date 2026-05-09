@@ -24,11 +24,22 @@ const supportLimiter = rateLimit({
 //
 // Gmail App Password: https://myaccount.google.com/apppasswords
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
+  family: 4,
   auth: {
     user: process.env.SUPPORT_EMAIL_USER,
     pass: process.env.SUPPORT_EMAIL_PASS,
   },
+});
+
+transporter.verify((error) => {
+  if (error) {
+    console.error("Support mail transporter error:", error);
+  } else {
+    console.log("Support mail transporter is ready");
+  }
 });
 
 const ISSUE_LABELS = {
