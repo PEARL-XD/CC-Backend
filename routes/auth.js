@@ -12,9 +12,10 @@ import RefreshToken from "../models/RefreshToken.js";
 const verifyAsync = promisify(jwt.verify);
 const router = express.Router();
 
-const ACCESS_TOKEN_TTL = "15m";
-const REFRESH_TOKEN_TTL = "7d";
-const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const ACCESS_TOKEN_TTL = "2m";
+const REFRESH_TOKEN_TTL = "10m";
+const REFRESH_TOKEN_MAX_AGE_MS = 10 * 60 * 1000;
+
 const isProduction = process.env.NODE_ENV === "production";
 
 const authLimiter = rateLimit({
