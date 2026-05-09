@@ -13,9 +13,8 @@ const verifyAsync = promisify(jwt.verify);
 const router = express.Router();
 
 const ACCESS_TOKEN_TTL = "2m";
-const REFRESH_TOKEN_TTL = "10m";
-const REFRESH_TOKEN_MAX_AGE_MS = 10 * 60 * 1000;
-
+const REFRESH_TOKEN_TTL = "3m";
+const REFRESH_TOKEN_MAX_AGE_MS = 3 * 60 * 1000;
 const isProduction = process.env.NODE_ENV === "production";
 
 const authLimiter = rateLimit({
