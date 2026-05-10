@@ -12,6 +12,12 @@ const isAdmin = async (req) => {
 };
 
 router.post("/notifications/device-token", authenticateToken, async (req, res) => {
+    console.log("HIT /notifications/device-token", {
+    userId: req.user.id,
+    phone: req.user.phone,
+    body: req.body,
+  });
+
   try {
     const token = String(req.body.token || "").trim();
     const platform = String(req.body.platform || "").trim().toLowerCase();
@@ -158,6 +164,11 @@ router.delete("/notifications/device-token", authenticateToken, async (req, res)
 });
 
 router.post("/admin/notifications/broadcast", authenticateToken, async (req, res) => {
+  console.log("HIT /admin/notifications/broadcast", {
+  userId: req.user.id,
+  phone: req.user.phone,
+});
+
   try {
     if (!(await isAdmin(req))) {
       return res.status(403).json({ error: "Admin access only" });
