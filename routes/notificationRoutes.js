@@ -15,6 +15,13 @@ router.post("/notifications/device-token", authenticateToken, async (req, res) =
   try {
     const token = String(req.body.token || "").trim();
     const platform = String(req.body.platform || "").trim().toLowerCase();
+    console.log("Incoming device token save:", {
+  userId: req.user.id,
+  phone: req.user.phone,
+  platform,
+  tokenPreview: token ? `${token.slice(0, 18)}...` : "",
+});
+
 
     if (!token) {
       return res.status(400).json({ error: "Device token is required." });
@@ -24,20 +31,34 @@ router.post("/notifications/device-token", authenticateToken, async (req, res) =
       return res.status(400).json({ error: "Platform must be android or ios." });
     }
 
-    await DeviceToken.findOneAndUpdate(
-      { token },
-      {
-        user: req.user.id,
-        token,
-        platform,
-        lastSeenAt: new Date(),
-      },
-      {
-        upsert: true,
-        new: true,
-        setDefaultsOnInsert: true,
-      },
-    );
+    const doc = await DeviceToken.findOneAndUpdate(
+  { token },
+  {
+    $set: {
+      user: req.user.id,
+      token,
+      platform,
+      lastSeenAt: new Date(),
+    },
+    $setOnInsert: {
+      orderUpdatesEnabled: true,
+      promoEnabled: true,
+    },
+  },
+  {
+    upsert: true,
+    new: true,
+    setDefaultsOnInsert: true,
+  },
+);
+
+console.log("Saved device token:", {
+  userId: doc.user?.toString?.() ?? doc.user,
+  tokenPreview: token.slice(0, 18) + "...",
+  promoEnabled: doc.promoEnabled,
+  orderUpdatesEnabled: doc.orderUpdatesEnabled,
+});
+
 
     return res.json({ success: true, message: "Device token saved." });
   } catch (error) {
