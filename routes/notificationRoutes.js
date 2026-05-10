@@ -162,6 +162,63 @@ router.delete("/notifications/device-token", authenticateToken, async (req, res)
     return res.status(500).json({ error: "Failed to remove device token." });
   }
 });
+router.post("/notifications/register-device-v2", authenticateToken, async (req, res) => {
+  try {
+    const token = String(req.body.token || "").trim();
+    const platform = String(req.body.platform || "").trim().toLowerCase();
+
+    console.log("HIT /notifications/register-device-v2", {
+      userId: req.user.id,
+      phone: req.user.phone,
+      platform,
+      tokenPreview: token ? `${token.slice(0, 18)}...` : "",
+    });
+
+    if (!token) {
+      return res.status(400).json({ error: "Device token is required." });
+    }
+
+    if (!["android", "ios"].includes(platform)) {
+      return res.status(400).json({ error: "Platform must be android or ios." });
+    }
+
+    const doc = await DeviceToken.findOneAndUpdate(
+      { token },
+      {
+        $set: {
+          user: req.user.id,
+          token,
+          platform,
+          lastSeenAt: new Date(),
+        },
+        $setOnInsert: {
+          orderUpdatesEnabled: true,
+          promoEnabled: true,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      },
+    );
+
+    console.log("Saved device token via v2:", {
+      userId: doc.user?.toString?.() ?? doc.user,
+      tokenPreview: token.slice(0, 18) + "...",
+      promoEnabled: doc.promoEnabled,
+      orderUpdatesEnabled: doc.orderUpdatesEnabled,
+    });
+
+    return res.json({
+      success: true,
+      message: "Device token saved via v2.",
+    });
+  } catch (error) {
+    console.error("Save device token v2 error:", error);
+    return res.status(500).json({ error: "Failed to save device token." });
+  }
+});
 
 router.post("/admin/notifications/broadcast", authenticateToken, async (req, res) => {
   console.log("HIT /admin/notifications/broadcast", {
