@@ -25,6 +25,57 @@ const isAdmin = async (req) => {
   const user = await User.findById(req.user.id).select("role").lean();
   return user?.role === "admin";
 };
+
+const ORDER_STATUS_MESSAGES = {
+  PLACED: {
+    title: "Order placed",
+    body: "We have received your order.",
+  },
+  CONFIRMED: {
+    title: "Order confirmed",
+    body: "Your order has been confirmed.",
+  },
+  PACKED: {
+    title: "Order packed",
+    body: "Your order is packed and getting ready to leave.",
+  },
+  OUT_FOR_DELIVERY: {
+    title: "Out for delivery",
+    body: "Your order is on the way.",
+  },
+  DELIVERED: {
+    title: "Order delivered",
+    body: "Your order has been delivered.",
+  },
+  CANCELLED: {
+    title: "Order cancelled",
+    body: "Your order has been cancelled.",
+  },
+};
+
+const sendOrderStatusNotification = async (order, status) => {
+  const config = ORDER_STATUS_MESSAGES[status];
+  if (!config) return;
+
+  const body =
+    status === "DELIVERED" && order.silentDelivery
+      ? "Your order has been delivered and left at your door."
+      : config.body;
+
+  await sendPushToUser({
+    userId: order.user.toString(),
+    title: config.title,
+    body,
+    preferenceType: "order",
+    data: {
+      type: "order",
+      route: "/orders",
+      orderId: order._id.toString(),
+      orderStatus: status,
+    },
+  });
+};
+
 const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
   order.paymentStatus = paymentStatus;
   order.orderStatus = "CANCELLED";
@@ -38,6 +89,7 @@ const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
   }
 
   await order.save();
+  await sendOrderStatusNotification(order, "CANCELLED");
 };
 
 /* ---------------- ROUTES ---------------- */
@@ -153,6 +205,8 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       statusTimeline: [{ status: "PLACED", time: new Date() }],
     });
 
+    await sendOrderStatusNotification(order, "PLACED");
+
     return res.json({
       success: true,
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
@@ -224,6 +278,7 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
     }
 
     await order.save();
+    await sendOrderStatusNotification(order, "CONFIRMED");
 
     res.json({ success: true, message: "Payment verified", order });
   } catch (err) {
@@ -340,26 +395,14 @@ router.patch(
       const order = await Order.findById(req.params.id);
       if (!order) return res.status(404).json({ error: "Order not found" });
 
-            const previousStatus = order.orderStatus;
+      const previousStatus = order.orderStatus;
 
       order.orderStatus = status;
       order.statusTimeline.push({ status, time: new Date() });
       await order.save();
 
-      if (previousStatus !== "DELIVERED" && status === "DELIVERED") {
-        await sendPushToUser({
-          userId: order.user.toString(),
-          title: "Order delivered",
-          body: order.silentDelivery
-            ? "Your order has been delivered and left at your door."
-            : "Your order has been delivered.",
-          data: {
-            type: "order",
-            route: "/orders",
-            orderId: order._id.toString(),
-            orderStatus: "DELIVERED",
-          },
-        });
+      if (order.orderStatus !== previousStatus) {
+        await sendOrderStatusNotification(order, status);
       }
 
       res.json({ success: true, order });

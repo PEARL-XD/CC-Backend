@@ -85,15 +85,33 @@ export async function sendPushToTokens({ tokens, title, body, data = {} }) {
   return { successCount, failureCount };
 }
 
-export async function sendPushToUser({ userId, title, body, data = {} }) {
-  const docs = await DeviceToken.find({ user: userId }).select("token").lean();
+export async function sendPushToUser({
+  userId,
+  title,
+  body,
+  data = {},
+  preferenceType = "order",
+}) {
+  const filter = { user: userId };
+
+  if (preferenceType === "order") {
+    filter.orderUpdatesEnabled = { $ne: false };
+  }
+
+  if (preferenceType === "promo") {
+    filter.promoEnabled = { $ne: false };
+  }
+
+  const docs = await DeviceToken.find(filter).select("token").lean();
   const tokens = docs.map((doc) => doc.token).filter(Boolean);
 
   return sendPushToTokens({ tokens, title, body, data });
 }
 
 export async function sendPromoBroadcast({ title, body, route = "/home" }) {
-  const docs = await DeviceToken.find().select("token").lean();
+  const docs = await DeviceToken.find({ promoEnabled: { $ne: false } })
+    .select("token")
+    .lean();
   const tokens = [...new Set(docs.map((doc) => doc.token).filter(Boolean))];
 
   return sendPushToTokens({

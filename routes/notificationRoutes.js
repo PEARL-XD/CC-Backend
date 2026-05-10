@@ -27,10 +27,16 @@ router.post("/notifications/device-token", authenticateToken, async (req, res) =
     await DeviceToken.findOneAndUpdate(
       { token },
       {
-        user: req.user.id,
-        token,
-        platform,
-        lastSeenAt: new Date(),
+        $set: {
+          user: req.user.id,
+          token,
+          platform,
+          lastSeenAt: new Date(),
+        },
+        $setOnInsert: {
+          orderUpdatesEnabled: true,
+          promoEnabled: true,
+        },
       },
       {
         upsert: true,
@@ -43,6 +49,76 @@ router.post("/notifications/device-token", authenticateToken, async (req, res) =
   } catch (error) {
     console.error("Save device token error:", error);
     return res.status(500).json({ error: "Failed to save device token." });
+  }
+});
+
+router.get("/notifications/preferences", authenticateToken, async (req, res) => {
+  try {
+    const token = String(req.query.token || "").trim();
+
+    if (!token) {
+      return res.status(400).json({ error: "Device token is required." });
+    }
+
+    const doc = await DeviceToken.findOne({
+      user: req.user.id,
+      token,
+    }).lean();
+
+    return res.json({
+      orderUpdatesEnabled: doc?.orderUpdatesEnabled ?? true,
+      promoEnabled: doc?.promoEnabled ?? true,
+    });
+  } catch (error) {
+    console.error("Fetch notification preferences error:", error);
+    return res.status(500).json({ error: "Failed to fetch preferences." });
+  }
+});
+
+router.patch("/notifications/preferences", authenticateToken, async (req, res) => {
+  try {
+    const token = String(req.body.token || "").trim();
+
+    if (!token) {
+      return res.status(400).json({ error: "Device token is required." });
+    }
+
+    const updates = {};
+    if (typeof req.body.orderUpdatesEnabled === "boolean") {
+      updates.orderUpdatesEnabled = req.body.orderUpdatesEnabled;
+    }
+    if (typeof req.body.promoEnabled === "boolean") {
+      updates.promoEnabled = req.body.promoEnabled;
+    }
+
+    const doc = await DeviceToken.findOneAndUpdate(
+      {
+        user: req.user.id,
+        token,
+      },
+      {
+        ...updates,
+        lastSeenAt: new Date(),
+      },
+      {
+        new: true,
+      },
+    );
+
+    if (!doc) {
+      return res.status(404).json({ error: "Device token not found." });
+    }
+
+    return res.json({
+      success: true,
+      preferences: {
+        orderUpdatesEnabled: doc.orderUpdatesEnabled,
+        promoEnabled: doc.promoEnabled,
+      },
+    });
+  } catch (error) {
+    console.error("Update notification preferences error:", error);
+    return res.status(500).json({ error: "Failed to update preferences." });
   }
 });
 
