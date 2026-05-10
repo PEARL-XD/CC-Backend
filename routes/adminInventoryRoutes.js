@@ -35,7 +35,7 @@ async function getOrCreateStorefrontSettings() {
   ).lean();
 }
 
-router.use(authenticateToken, requireAdmin);
+router.use("/admin", authenticateToken, requireAdmin);
 
 router.get("/admin/inventory", async (req, res) => {
   try {
