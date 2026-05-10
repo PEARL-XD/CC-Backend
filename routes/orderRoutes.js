@@ -8,56 +8,6 @@ import StorefrontSettings from "../models/StorefrontSettings.js";
 import { sendPushToUser } from "../utils/pushNotifications.js";
 
 const router = express.Router();
-const ORDER_STATUS_MESSAGES = {
-  PLACED: {
-    title: "Order placed",
-    body: "We have received your order.",
-  },
-  CONFIRMED: {
-    title: "Order confirmed",
-    body: "Your order has been confirmed.",
-  },
-  PACKED: {
-    title: "Order packed",
-    body: "Your order is packed and getting ready to leave.",
-  },
-  OUT_FOR_DELIVERY: {
-    title: "Out for delivery",
-    body: "Your order is on the way.",
-  },
-  DELIVERED: {
-    title: "Order delivered",
-    body: "Your order has been delivered.",
-  },
-  CANCELLED: {
-    title: "Order cancelled",
-    body: "Your order has been cancelled.",
-  },
-};
-
-const sendOrderStatusNotification = async (order, status) => {
-  const config = ORDER_STATUS_MESSAGES[status];
-  if (!config) return;
-
-  const body =
-    status === "DELIVERED" && order.silentDelivery
-      ? "Your order has been delivered and left at your door."
-      : config.body;
-
-  await sendPushToUser({
-    userId: order.user.toString(),
-    title: config.title,
-    body,
-    preferenceType: "order",
-    data: {
-      type: "order",
-      route: "/orders",
-      orderId: order._id.toString(),
-      orderStatus: status,
-    },
-  });
-};
-
 
 /* ---------------- HELPERS ---------------- */
 
@@ -203,7 +153,6 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       statusTimeline: [{ status: "PLACED", time: new Date() }],
     });
 
-     await sendOrderStatusNotification(order, "PLACED");
     return res.json({
       success: true,
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
@@ -275,7 +224,6 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
     }
 
     await order.save();
-    await sendOrderStatusNotification(order, "CONFIRMED");
 
     res.json({ success: true, message: "Payment verified", order });
   } catch (err) {
@@ -311,7 +259,6 @@ router.post("/orders/payment-failed", authenticateToken, async (req, res) => {
     }
 
     await cancelOrderForPaymentIssue(order, finalPaymentStatus);
-  await sendOrderStatusNotification(order, "CANCELLED");
 
     res.json({
       success: true,
@@ -398,9 +345,7 @@ router.patch(
       order.orderStatus = status;
       order.statusTimeline.push({ status, time: new Date() });
       await order.save();
-  if (order.orderStatus !== previousStatus) {
-        await sendOrderStatusNotification(order, status);
-      }
+
       if (previousStatus !== "DELIVERED" && status === "DELIVERED") {
         await sendPushToUser({
           userId: order.user.toString(),

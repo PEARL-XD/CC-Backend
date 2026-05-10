@@ -19,14 +19,6 @@ const deviceTokenSchema = new mongoose.Schema(
       enum: ["android", "ios"],
       required: true,
     },
-    orderUpdatesEnabled: {
-      type: Boolean,
-      default: true,
-    },
-    promoEnabled: {
-      type: Boolean,
-      default: true,
-    },
     lastSeenAt: {
       type: Date,
       default: Date.now,
