@@ -8,6 +8,9 @@ import { Resend } from "resend";
 
 import User from "../models/User.js";
 import RefreshToken from "../models/RefreshToken.js";
+import Cart from "../models/Cart.js";
+import DeviceToken from "../models/DeviceToken.js";
+import SupportTicket from "../models/SupportTicket.js";
 
 const verifyAsync = promisify(jwt.verify);
 const router = express.Router();
@@ -367,6 +370,39 @@ router.post("/logout", authLimiter, async (req, res) => {
   } catch (error) {
     console.error("Logout error:", error);
     return res.status(500).json({ error: "Server error during logout." });
+  }
+});
+
+// DELETE /account
+router.delete("/account", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId).select("_id");
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    await Promise.all([
+      RefreshToken.updateMany({ userId }, { revoked: true }),
+      DeviceToken.deleteMany({ user: userId }),
+      Cart.deleteOne({ userId }),
+      SupportTicket.deleteMany({ user: userId }),
+    ]);
+
+    await User.deleteOne({ _id: userId });
+
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
+      path: "/",
+    });
+
+    return res.json({ message: "Account deleted successfully." });
+  } catch (error) {
+    console.error("Account deletion error:", error);
+    return res.status(500).json({ error: "Could not delete account." });
   }
 });
 
