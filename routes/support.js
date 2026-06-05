@@ -11,11 +11,26 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
+const PUBLIC_SUPPORT_TOPICS = new Set([
+  "Order help",
+  "Delivery issue",
+  "Payment issue",
+  "Product quality",
+  "General question",
+]);
+
 // Max 5 support tickets per user per 10 minutes
 const supportLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 5,
   keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req),
+  message: { error: "Too many requests. Please wait before submitting again." },
+});
+
+const publicSupportLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator: ipKeyGenerator,
   message: { error: "Too many requests. Please wait before submitting again." },
 });
 
@@ -36,6 +51,66 @@ const PRIORITY_EMOJI = {
   Medium: "🟡",
   High: "🔴",
 };
+
+function normalizeText(value) {
+  return value?.trim() ?? "";
+}
+
+function isValidEmail(email) {
+  return /\S+@\S+\.\S+/.test(email);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+async function sendPublicSupportEmail({
+  name,
+  email,
+  orderId,
+  topic,
+  message,
+}) {
+  if (!resend) {
+    throw new Error("RESEND_API_KEY is not configured.");
+  }
+
+  const safeName = escapeHtml(name || "Anonymous");
+  const safeEmail = escapeHtml(email);
+  const safeOrderId = orderId ? escapeHtml(orderId) : "-";
+  const safeTopic = escapeHtml(topic);
+  const safeMessage = escapeHtml(message).replaceAll("\n", "<br />");
+
+  const { error } = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL,
+    to: [process.env.SUPPORT_EMAIL_TO],
+    replyTo: email,
+    subject: `[Public Support] ${topic}${orderId ? ` - ${orderId}` : ""}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
+        <h2 style="color:#E53935">Public support message</h2>
+        <table cellpadding="6" style="font-size:14px;border-collapse:collapse;">
+          <tr><td style="color:#6B7280;width:120px">Name</td><td>${safeName}</td></tr>
+          <tr><td style="color:#6B7280">Email</td><td>${safeEmail}</td></tr>
+          <tr><td style="color:#6B7280">Order ID</td><td>${safeOrderId}</td></tr>
+          <tr><td style="color:#6B7280">Topic</td><td>${safeTopic}</td></tr>
+        </table>
+        <hr style="margin:16px 0;border:none;border-top:1px solid #E5E7EB" />
+        <p style="color:#6B7280;font-size:13px;margin:0 0 8px;">Message</p>
+        <div style="white-space:normal">${safeMessage}</div>
+      </div>
+    `,
+  });
+
+  if (error) {
+    throw new Error(error.message || "Failed to send public support email.");
+  }
+}
 
 async function sendSupportAlert(ticket, order, user) {
   if (!resend) {
@@ -172,6 +247,59 @@ router.post("/support", authenticateToken, supportLimiter, async (req, res) => {
   } catch (err) {
     console.error("Support ticket error:", err);
     res.status(500).json({ error: "Failed to raise support ticket." });
+  }
+});
+
+// POST /api/support/public
+router.post("/support/public", publicSupportLimiter, async (req, res) => {
+  try {
+    const name = normalizeText(req.body.name);
+    const email = normalizeText(req.body.email).toLowerCase();
+    const orderId = normalizeText(req.body.orderId);
+    const topic = normalizeText(req.body.topic) || "General question";
+    const message = normalizeText(req.body.message);
+
+    if (!email || !message) {
+      return res
+        .status(400)
+        .json({ error: "Email and message are required." });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: "Invalid email address." });
+    }
+
+    if (!PUBLIC_SUPPORT_TOPICS.has(topic)) {
+      return res.status(400).json({ error: "Invalid topic." });
+    }
+
+    if (name && name.length > 100) {
+      return res.status(400).json({ error: "Name is too long." });
+    }
+
+    if (orderId && orderId.length > 80) {
+      return res.status(400).json({ error: "Order ID is too long." });
+    }
+
+    if (message.length > 2000) {
+      return res.status(400).json({ error: "Message is too long." });
+    }
+
+    await sendPublicSupportEmail({
+      name,
+      email,
+      orderId,
+      topic,
+      message,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Your support message has been sent.",
+    });
+  } catch (err) {
+    console.error("Public support email error:", err);
+    return res.status(500).json({ error: "Could not send your message." });
   }
 });
 
