@@ -21,6 +21,11 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    avatarStyle: {
+      type: String,
+      enum: ["neutral", "male", "female"],
+      default: "neutral",
+    },
     role: { type: String, enum: ["user", "admin"], default: "user" }, // ← add this
   },
   {

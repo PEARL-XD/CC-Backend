@@ -47,6 +47,8 @@ const refreshCookieOptions = {
   maxAge: REFRESH_TOKEN_MAX_AGE_MS,
 };
 
+const avatarStyles = new Set(["neutral", "male", "female"]);
+
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
@@ -76,6 +78,12 @@ function normalizeEmail(email) {
 
 function normalizeText(value) {
   return value?.trim() ?? "";
+}
+
+function normalizeAvatarStyle(value) {
+  if (value === undefined) return undefined;
+  const avatarStyle = normalizeText(value).toLowerCase();
+  return avatarStyles.has(avatarStyle) ? avatarStyle : null;
 }
 
 function isValidEmail(email) {
@@ -420,6 +428,7 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
       req.body.tower !== undefined ? normalizeText(req.body.tower) : undefined;
     const flat =
       req.body.flat !== undefined ? normalizeText(req.body.flat) : undefined;
+    const avatarStyle = normalizeAvatarStyle(req.body.avatarStyle);
 
     if (!name || !email || !phone) {
       return res
@@ -449,6 +458,10 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "Flat cannot be empty." });
     }
 
+    if (avatarStyle === null) {
+      return res.status(400).json({ error: "Invalid avatar style." });
+    }
+
     const existingPhone = await User.findOne({
       phone,
       _id: { $ne: userId },
@@ -469,6 +482,7 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     if (society !== undefined) updates.society = society;
     if (tower !== undefined) updates.tower = tower;
     if (flat !== undefined) updates.flat = flat;
+    if (avatarStyle !== undefined) updates.avatarStyle = avatarStyle;
 
     const user = await User.findByIdAndUpdate(userId, updates, {
       new: true,
