@@ -60,6 +60,18 @@ const formatOrderItemCount = (order) => {
   return count;
 };
 
+const logOrderSummary = (label, order) => {
+  console.log(label, {
+    orderId: order._id?.toString?.() ?? String(order._id ?? ""),
+    userId: order.user?.toString?.() ?? String(order.user ?? ""),
+    orderStatus: order.orderStatus,
+    paymentStatus: order.paymentStatus,
+    totalAmount: order.totalAmount,
+    itemCount: formatOrderItemCount(order),
+    silentDelivery: Boolean(order.silentDelivery),
+  });
+};
+
 const sendOrderStatusNotification = async (order, status) => {
   const config = ORDER_STATUS_MESSAGES[status];
   if (!config) return;
@@ -69,7 +81,7 @@ const sendOrderStatusNotification = async (order, status) => {
       ? "Your order has been delivered and left at your door."
       : config.body;
 
-  await sendPushToUser({
+  return sendPushToUser({
     userId: order.user.toString(),
     title: config.title,
     body,
@@ -90,7 +102,7 @@ const sendNewOrderAdminNotification = async (order) => {
     ? String(amountValue)
     : amountValue.toFixed(2);
 
-  await sendPushToAdmins({
+  return sendPushToAdmins({
     title: "New order received",
     body: `Rs. ${amount} order placed with ${itemCount} item${itemCount === 1 ? "" : "s"}.`,
     data: {
@@ -232,6 +244,8 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       statusTimeline: [{ status: "PLACED", time: new Date() }],
     });
 
+    logOrderSummary("Order created:", order);
+
     await sendNewOrderAdminNotification(order)
       .then((result) => {
         console.log("Admin order notification result:", result);
@@ -311,7 +325,15 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
     }
 
     await order.save();
-    await sendOrderStatusNotification(order, "CONFIRMED");
+    logOrderSummary("Payment verified:", order);
+
+    await sendOrderStatusNotification(order, "CONFIRMED")
+      .then((result) => {
+        console.log("Customer order notification result:", result);
+      })
+      .catch((error) => {
+        console.error("Customer order notification failed:", error);
+      });
 
     res.json({ success: true, message: "Payment verified", order });
   } catch (err) {
@@ -435,7 +457,15 @@ router.patch(
       await order.save();
 
       if (order.orderStatus !== previousStatus) {
-        await sendOrderStatusNotification(order, status);
+        logOrderSummary("Admin updated order:", order);
+
+        await sendOrderStatusNotification(order, status)
+          .then((result) => {
+            console.log("Customer order notification result:", result);
+          })
+          .catch((error) => {
+            console.error("Customer order notification failed:", error);
+          });
       }
 
       res.json({ success: true, order });
