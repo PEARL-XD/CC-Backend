@@ -1,11 +1,11 @@
-import express from "express";
+﻿import express from "express";
 import crypto from "crypto";
 import { razorpay } from "../config/razorpay.js";
 import { Order } from "../models/Order.js";
 import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
-import { sendPushToUser } from "../utils/pushNotifications.js";
+import { sendPushToAdmins, sendPushToUser } from "../utils/pushNotifications.js";
 
 const router = express.Router();
 
@@ -53,6 +53,13 @@ const ORDER_STATUS_MESSAGES = {
   },
 };
 
+const formatOrderItemCount = (order) => {
+  const count = Array.isArray(order.items)
+    ? order.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+    : 0;
+  return count;
+};
+
 const sendOrderStatusNotification = async (order, status) => {
   const config = ORDER_STATUS_MESSAGES[status];
   if (!config) return;
@@ -72,6 +79,26 @@ const sendOrderStatusNotification = async (order, status) => {
       route: "/orders",
       orderId: order._id.toString(),
       orderStatus: status,
+    },
+  });
+};
+
+const sendNewOrderAdminNotification = async (order) => {
+  const itemCount = formatOrderItemCount(order);
+  const amountValue = Number(order.totalAmount || 0);
+  const amount = Number.isInteger(amountValue)
+    ? String(amountValue)
+    : amountValue.toFixed(2);
+
+  await sendPushToAdmins({
+    title: "New order received",
+    body: `Rs. ${amount} order placed with ${itemCount} item${itemCount === 1 ? "" : "s"}.`,
+    data: {
+      type: "admin_order",
+      route: "/admin",
+      orderId: order._id.toString(),
+      orderStatus: "PLACED",
+      orderAmount: String(order.totalAmount ?? ""),
     },
   });
 };
@@ -205,7 +232,13 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       statusTimeline: [{ status: "PLACED", time: new Date() }],
     });
 
-    await sendOrderStatusNotification(order, "PLACED");
+    await sendNewOrderAdminNotification(order)
+      .then((result) => {
+        console.log("Admin order notification result:", result);
+      })
+      .catch((error) => {
+        console.error("Admin order notification failed:", error);
+      });
 
     return res.json({
       success: true,
@@ -391,7 +424,7 @@ router.patch(
         return res.status(400).json({ error: "Invalid status" });
       }
 
-      // Single null check, in the right place — before any mutations
+      // Single null check, in the right place â€” before any mutations
       const order = await Order.findById(req.params.id);
       if (!order) return res.status(404).json({ error: "Order not found" });
 
@@ -415,3 +448,4 @@ router.patch(
 );
 
 export default router;
+

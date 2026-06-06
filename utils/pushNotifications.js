@@ -1,5 +1,6 @@
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
+import User from "../models/User.js";
 import DeviceToken from "../models/DeviceToken.js";
 
 function getFirebaseApp() {
@@ -103,6 +104,26 @@ export async function sendPushToUser({
   }
 
   const docs = await DeviceToken.find(filter).select("token").lean();
+  const tokens = docs.map((doc) => doc.token).filter(Boolean);
+
+  return sendPushToTokens({ tokens, title, body, data });
+}
+
+export async function sendPushToAdmins({
+  title,
+  body,
+  data = {},
+}) {
+  const adminUsers = await User.find({ role: "admin" }).select("_id").lean();
+  const adminIds = adminUsers.map((user) => user._id).filter(Boolean);
+
+  if (!adminIds.length) {
+    return { successCount: 0, failureCount: 0 };
+  }
+
+  const docs = await DeviceToken.find({ user: { $in: adminIds } })
+    .select("token")
+    .lean();
   const tokens = docs.map((doc) => doc.token).filter(Boolean);
 
   return sendPushToTokens({ tokens, title, body, data });
