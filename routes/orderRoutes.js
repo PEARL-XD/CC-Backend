@@ -115,6 +115,219 @@ const sendNewOrderAdminNotification = async (order) => {
   });
 };
 
+const confirmRazorpayOrder = async ({
+  order,
+  razorpay_order_id,
+  razorpay_payment_id,
+  razorpay_signature,
+}) => {
+  if (order.paymentStatus === "PAID") {
+    return { statusCode: 409, error: "Order already verified", order };
+  }
+
+  const body = `${razorpay_order_id}|${razorpay_payment_id}`;
+  const expectedSignature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(body)
+    .digest("hex");
+
+  if (expectedSignature !== razorpay_signature) {
+    await cancelOrderForPaymentIssue(order, "FAILED");
+    return { statusCode: 400, error: "Invalid payment signature", order };
+  }
+
+  order.paymentStatus = "PAID";
+  order.orderStatus = "CONFIRMED";
+
+  const alreadyConfirmed = order.statusTimeline?.some(
+    (entry) => entry.status === "CONFIRMED",
+  );
+
+  if (!alreadyConfirmed) {
+    order.statusTimeline.push({ status: "CONFIRMED", time: new Date() });
+  }
+
+  await order.save();
+  logOrderSummary("Payment verified:", order);
+
+  try {
+    const notificationResult = await sendOrderStatusNotification(
+      order,
+      "CONFIRMED",
+    );
+    console.log("Customer order notification result:", notificationResult);
+  } catch (error) {
+    console.error("Customer order notification failed:", error);
+  }
+
+  return { statusCode: 200, order };
+};
+
+const buildPaymentResultHtml = ({ localOrderId, status, message = "" }) => {
+  const query = new URLSearchParams({
+    status,
+    localOrderId: String(localOrderId || ""),
+  });
+
+  if (message) {
+    query.set("message", message);
+  }
+
+  const deepLink = `cleanchops://payment-result?${query.toString()}`;
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Payment Result</title>
+    <script>
+      window.location.replace(${JSON.stringify(deepLink)});
+    </script>
+  </head>
+  <body style="font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#fff;color:#111;">
+    <div>Completing payment...</div>
+  </body>
+</html>`;
+};
+
+const buildRazorpayWebviewCheckoutHtml = ({
+  key,
+  amount,
+  currency,
+  razorpayOrderId,
+  localOrderId,
+  callbackUrl,
+  preferredMethod = "upi",
+}) => {
+  const dismissUrl = `cleanchops://payment-result?status=cancelled&localOrderId=${encodeURIComponent(
+    localOrderId,
+  )}`;
+
+  const normalizedMethod = String(preferredMethod || "upi")
+    .trim()
+    .toLowerCase();
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CleanChops Payment</title>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(180deg, #fff8f3 0%, #ffffff 100%);
+        color: #111827;
+      }
+      .card {
+        text-align: center;
+        padding: 24px;
+        max-width: 320px;
+      }
+      .spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(229, 57, 53, 0.18);
+        border-top-color: #e53935;
+        border-radius: 999px;
+        margin: 0 auto 14px;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 8px;
+      }
+      p {
+        margin: 0;
+        color: #6b7280;
+        line-height: 1.5;
+      }
+    </style>
+    <script>
+      function buildOptions() {
+        const method = (function () {
+          switch (${JSON.stringify(normalizedMethod)}) {
+            case "card":
+              return {
+                upi: false,
+                card: true,
+                netbanking: false,
+                wallet: false,
+              };
+            case "netbanking":
+              return {
+                upi: false,
+                card: false,
+                netbanking: true,
+                wallet: false,
+              };
+            case "more":
+              return {
+                upi: true,
+                card: true,
+                netbanking: true,
+                wallet: true,
+              };
+            case "upi":
+            default:
+              return {
+                upi: true,
+                card: false,
+                netbanking: false,
+                wallet: false,
+              };
+          }
+        })();
+
+        return {
+          key: ${JSON.stringify(key)},
+          amount: ${JSON.stringify(amount)},
+          currency: ${JSON.stringify(currency)},
+          order_id: ${JSON.stringify(razorpayOrderId)},
+          name: "CleanChops",
+          description: "Order Payment",
+          theme: { color: "#E53935" },
+          method,
+          webview_intent: true,
+          redirect: true,
+          callback_url: ${JSON.stringify(callbackUrl)},
+          modal: {
+            ondismiss: function () {
+              window.location.href = ${JSON.stringify(dismissUrl)};
+            },
+          },
+        };
+      }
+
+      function startCheckout() {
+        const options = buildOptions();
+        const rzp = new Razorpay(options);
+        rzp.open();
+      }
+
+      window.addEventListener("load", startCheckout);
+    </script>
+  </head>
+  <body>
+    <div class="card">
+      <div class="spinner"></div>
+      <h1>Opening secure payment</h1>
+      <p>Please wait while we launch Razorpay.</p>
+    </div>
+  </body>
+</html>`;
+};
+
 const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
   order.paymentStatus = paymentStatus;
   order.orderStatus = "CANCELLED";
@@ -268,6 +481,47 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/orders/webview-checkout
+ * Query: { key, amount, currency, razorpayOrderId, localOrderId }
+ * Used by the iOS webview checkout flow.
+ */
+router.get("/orders/webview-checkout", (req, res) => {
+  try {
+    const key = String(req.query.key || "").trim();
+    const amount = Number(req.query.amount || 0);
+    const currency = String(req.query.currency || "INR").trim() || "INR";
+    const razorpayOrderId = String(req.query.razorpayOrderId || "").trim();
+    const localOrderId = String(req.query.localOrderId || "").trim();
+    const preferredMethod = String(req.query.preferredMethod || "upi").trim();
+
+    if (!key || !amount || !razorpayOrderId || !localOrderId) {
+      return res.status(400).send("Missing payment parameters");
+    }
+
+    const callbackUrl = `${req.protocol}://${req.get(
+      "host",
+    )}/api/orders/verify-webview?localOrderId=${encodeURIComponent(
+      localOrderId,
+    )}`;
+
+    return res.type("html").send(
+      buildRazorpayWebviewCheckoutHtml({
+        key,
+        amount,
+        currency,
+        razorpayOrderId,
+        localOrderId,
+        callbackUrl,
+        preferredMethod,
+      }),
+    );
+  } catch (err) {
+    console.error("Build webview checkout error:", err);
+    return res.status(500).send("Failed to load payment page");
+  }
+});
+
 
 /**
  * POST /api/orders/verify
@@ -298,47 +552,104 @@ router.post("/orders/verify", authenticateToken, async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
     }
 
-    if (order.paymentStatus === "PAID") {
-      return res.status(409).json({ error: "Order already verified" });
+    const result = await confirmRazorpayOrder({
+      order,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    });
+
+    if (result.statusCode !== 200) {
+      return res.status(result.statusCode).json({ error: result.error });
     }
-
-    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
-    const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(body)
-      .digest("hex");
-
-    if (expectedSignature !== razorpay_signature) {
-      await cancelOrderForPaymentIssue(order, "FAILED");
-      return res.status(400).json({ error: "Invalid payment signature" });
-    }
-
-    order.paymentStatus = "PAID";
-    order.orderStatus = "CONFIRMED";
-
-    const alreadyConfirmed = order.statusTimeline?.some(
-      (entry) => entry.status === "CONFIRMED",
-    );
-
-    if (!alreadyConfirmed) {
-      order.statusTimeline.push({ status: "CONFIRMED", time: new Date() });
-    }
-
-    await order.save();
-    logOrderSummary("Payment verified:", order);
-
-    await sendOrderStatusNotification(order, "CONFIRMED")
-      .then((result) => {
-        console.log("Customer order notification result:", result);
-      })
-      .catch((error) => {
-        console.error("Customer order notification failed:", error);
-      });
 
     res.json({ success: true, message: "Payment verified", order });
   } catch (err) {
     console.error("Verify payment error:", err);
     res.status(500).json({ error: "Failed to verify payment" });
+  }
+});
+
+router.post("/orders/verify-webview", async (req, res) => {
+  try {
+    const localOrderId = String(
+      req.query.localOrderId || req.body.localOrderId || "",
+    ).trim();
+    const razorpay_order_id = String(req.body.razorpay_order_id || "").trim();
+    const razorpay_payment_id = String(req.body.razorpay_payment_id || "").trim();
+    const razorpay_signature = String(req.body.razorpay_signature || "").trim();
+
+    if (!localOrderId) {
+      return res
+        .type("html")
+        .send(
+          buildPaymentResultHtml({
+            localOrderId: "",
+            status: "failed",
+            message: "Missing order reference",
+          }),
+        );
+    }
+
+    const order = await Order.findById(localOrderId);
+    if (!order) {
+      return res
+        .type("html")
+        .send(
+          buildPaymentResultHtml({
+            localOrderId,
+            status: "failed",
+            message: "Order not found",
+          }),
+        );
+    }
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res
+        .type("html")
+        .send(
+          buildPaymentResultHtml({
+            localOrderId,
+            status: "failed",
+            message: "Missing payment details",
+          }),
+        );
+    }
+
+    const result = await confirmRazorpayOrder({
+      order,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    });
+
+    if (result.statusCode === 200 || result.statusCode === 409) {
+      return res
+        .type("html")
+        .send(buildPaymentResultHtml({ localOrderId, status: "success" }));
+    }
+
+    return res
+      .type("html")
+      .send(
+        buildPaymentResultHtml({
+          localOrderId,
+          status: "failed",
+          message: result.error || "Payment verification failed",
+        }),
+      );
+  } catch (err) {
+    console.error("Webview payment verify error:", err);
+    return res
+      .status(500)
+      .type("html")
+      .send(
+        buildPaymentResultHtml({
+          localOrderId: "",
+          status: "failed",
+          message: "Payment verification failed",
+        }),
+      );
   }
 });
 // Added a new route for failed/dismissed payments
