@@ -66,6 +66,7 @@ async function getStorefrontSettings() {
   const settings = await StorefrontSettings.findOne({ key: "storefront" }).lean();
   return {
     cookedEnabled: settings?.cookedEnabled ?? true,
+    storeOpen: settings?.storeOpen ?? true,
   };
 }
 
@@ -136,6 +137,16 @@ router.get("/items", async (req, res) => {
   } catch (err) {
     console.error("GET /api/items error:", err);
     return res.status(500).json({ error: "Failed to fetch items" });
+  }
+});
+
+router.get("/storefront", async (req, res) => {
+  try {
+    const settings = await getStorefrontSettings();
+    return res.json({ settings });
+  } catch (err) {
+    console.error("GET /api/storefront error:", err);
+    return res.status(500).json({ error: "Failed to fetch storefront" });
   }
 });
 

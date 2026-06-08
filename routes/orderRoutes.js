@@ -370,6 +370,15 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     }).lean();
 
     const cookedEnabled = settings?.cookedEnabled ?? true;
+    const storeOpen = settings?.storeOpen ?? true;
+    const scheduleText = String(schedule || "").trim();
+
+    if (!storeOpen && !scheduleText) {
+      return res.status(400).json({
+        error:
+          "Store is closed right now. It reopens in the morning, but you can schedule your order for now.",
+      });
+    }
 
     const productMap = Object.fromEntries(
       products.map((p) => [p._id.toString(), p])
@@ -448,7 +457,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     const order = await Order.create({
       user: req.user.id,
       items: verifiedItems,
-      schedule,
+      schedule: scheduleText || undefined,
       totalAmount,
       razorpayOrderId: razorpayOrder.id,
       paymentStatus: "PENDING",

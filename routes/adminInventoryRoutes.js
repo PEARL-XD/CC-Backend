@@ -30,7 +30,13 @@ const requireAdmin = async (req, res, next) => {
 async function getOrCreateStorefrontSettings() {
   return StorefrontSettings.findOneAndUpdate(
     { key: STOREFRONT_KEY },
-    { $setOnInsert: { key: STOREFRONT_KEY, cookedEnabled: true } },
+    {
+      $setOnInsert: {
+        key: STOREFRONT_KEY,
+        cookedEnabled: true,
+        storeOpen: true,
+      },
+    },
     { upsert: true, new: true }
   ).lean();
 }
@@ -51,6 +57,7 @@ router.get("/admin/inventory", async (req, res) => {
     return res.json({
       settings: {
         cookedEnabled: settings?.cookedEnabled ?? true,
+        storeOpen: settings?.storeOpen ?? true,
       },
       items,
     });
@@ -63,16 +70,36 @@ router.get("/admin/inventory", async (req, res) => {
 router.patch("/admin/storefront", async (req, res) => {
   try {
     const cookedEnabled = req.body.cookedEnabled;
+    const storeOpen = req.body.storeOpen;
+    const updates = { key: STOREFRONT_KEY };
 
-    if (typeof cookedEnabled !== "boolean") {
+    if ("cookedEnabled" in req.body) {
+      if (typeof cookedEnabled !== "boolean") {
+        return res.status(400).json({
+          error: "cookedEnabled must be true or false",
+        });
+      }
+      updates.cookedEnabled = cookedEnabled;
+    }
+
+    if ("storeOpen" in req.body) {
+      if (typeof storeOpen !== "boolean") {
+        return res.status(400).json({
+          error: "storeOpen must be true or false",
+        });
+      }
+      updates.storeOpen = storeOpen;
+    }
+
+    if (!("cookedEnabled" in updates) && !("storeOpen" in updates)) {
       return res.status(400).json({
-        error: "cookedEnabled must be true or false",
+        error: "No storefront setting provided",
       });
     }
 
     const settings = await StorefrontSettings.findOneAndUpdate(
       { key: STOREFRONT_KEY },
-      { $set: { key: STOREFRONT_KEY, cookedEnabled } },
+      { $set: updates },
       { upsert: true, new: true }
     ).lean();
 
@@ -82,6 +109,7 @@ router.patch("/admin/storefront", async (req, res) => {
       success: true,
       settings: {
         cookedEnabled: settings.cookedEnabled,
+        storeOpen: settings.storeOpen,
       },
     });
   } catch (err) {
