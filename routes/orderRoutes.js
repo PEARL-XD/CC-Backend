@@ -6,6 +6,7 @@ import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
 import { sendPushToAdmins, sendPushToUser } from "../utils/pushNotifications.js";
+import { calculatePackPrice } from "../utils/packPricing.js";
 
 const router = express.Router();
 
@@ -429,7 +430,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
         });
       }
 
-      const unitPrice = (Number(product.price) || 0) * selectedSize / 1000;
+      const unitPrice = calculatePackPrice(product.price, selectedSize);
 
       verifiedItems.push({
         _id: product._id,

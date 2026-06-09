@@ -1,8 +1,13 @@
 import express from "express";
 import { authenticateToken, authLimiter } from "./auth.js";
 import Cart from "../models/Cart.js";
-import Item from "../models/Item.js"; // ← needed to verify price server-side
+import Item from "../models/Item.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
+import {
+  calculatePackPrice,
+  normalizePackSize,
+} from "../utils/packPricing.js";
+
 const router = express.Router();
 router.use(authLimiter);
 
@@ -19,6 +24,51 @@ async function getCart(userId) {
   return cart;
 }
 
+async function hydrateCartItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+
+  const ids = [
+    ...new Set(items.map((item) => item?._id?.toString?.()).filter(Boolean)),
+  ];
+
+  const products = ids.length
+    ? await Item.find({ _id: { $in: ids } })
+        .select("_id name imgUrl price")
+        .lean()
+    : [];
+
+  const productMap = new Map(
+    products.map((product) => [product._id.toString(), product]),
+  );
+
+  return items.map((item) => {
+    const plain = typeof item?.toObject === "function" ? item.toObject() : item;
+    const rawId = plain?._id?.toString?.() ?? String(plain?._id ?? "");
+    const product = productMap.get(rawId);
+    const selectedSize =
+      normalizePackSize(plain?.selectedSize) ??
+      Number(plain?.selectedSize ?? 0);
+
+    if (!product) {
+      return {
+        ...plain,
+        selectedSize,
+      };
+    }
+
+    return {
+      ...plain,
+      _id: product._id,
+      name: product.name,
+      img: product.imgUrl,
+      selectedSize,
+      price: calculatePackPrice(product.price, selectedSize),
+    };
+  });
+}
+
 function validateItemInput(res, { _id, selectedSize, quantity }) {
   if (!_id || typeof selectedSize !== "number") {
     res.status(400).json({ error: "Invalid item" });
@@ -27,7 +77,9 @@ function validateItemInput(res, { _id, selectedSize, quantity }) {
   if (quantity !== undefined) {
     const qty = Number(quantity);
     if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QUANTITY) {
-      res.status(400).json({ error: `Quantity must be between 1 and ${MAX_QUANTITY}` });
+      res
+        .status(400)
+        .json({ error: `Quantity must be between 1 and ${MAX_QUANTITY}` });
       return false;
     }
   }
@@ -38,9 +90,9 @@ function validateItemInput(res, { _id, selectedSize, quantity }) {
 
 router.get("/cart", authenticateToken, async (req, res) => {
   try {
-    // Use getCart so a first-time user always gets a proper document
     const cart = await getCart(req.user.id);
-    res.json({ cart: cart.items });
+    const cartItems = await hydrateCartItems(cart.items);
+    res.json({ cart: cartItems });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch cart" });
@@ -91,10 +143,8 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const cart = await getCart(userId);
 
-    const unitPrice = (Number(product.price) || 0) * normalizedSize / 1000;
-
     const idx = cart.items.findIndex(
-      (i) => i._id.toString() === _id && i.selectedSize === normalizedSize
+      (i) => i._id.toString() === _id && i.selectedSize === normalizedSize,
     );
 
     if (idx !== -1) {
@@ -107,7 +157,6 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
       }
 
       cart.items[idx].quantity = newQty;
-      cart.items[idx].price = unitPrice;
       cart.items[idx].name = product.name;
       cart.items[idx].img = product.imgUrl;
     } else {
@@ -119,12 +168,12 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
         _id,
         selectedSize: normalizedSize,
         quantity: qty,
-        price: unitPrice,
         name: product.name,
         img: product.imgUrl,
       });
     }
 
+    cart.items = await hydrateCartItems(cart.items);
     await cart.save();
     return res.json({ cart: cart.items });
   } catch (err) {
@@ -133,13 +182,11 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
   }
 });
 
-
 // REMOVE ITEM
 router.post("/cart/remove", authenticateToken, async (req, res) => {
   try {
     const { _id, selectedSize } = req.body;
 
-    // Validate presence of required fields before doing anything
     if (!_id || selectedSize === undefined) {
       return res.status(400).json({ error: "Invalid item" });
     }
@@ -147,7 +194,7 @@ router.post("/cart/remove", authenticateToken, async (req, res) => {
     const cart = await getCart(req.user.id);
 
     cart.items = cart.items.filter(
-      (i) => !(i._id.toString() === _id && i.selectedSize === Number(selectedSize))
+      (i) => !(i._id.toString() === _id && i.selectedSize === Number(selectedSize)),
     );
 
     await cart.save();
@@ -163,18 +210,20 @@ router.post("/cart/update", authenticateToken, async (req, res) => {
   try {
     const { _id, selectedSize, quantity } = req.body;
 
-    // Validate before any DB work
-    if (!validateItemInput(res, { _id, selectedSize: Number(selectedSize), quantity })) return;
+    if (!validateItemInput(res, { _id, selectedSize: Number(selectedSize), quantity })) {
+      return;
+    }
 
     const cart = await getCart(req.user.id);
 
     const item = cart.items.find(
-      (i) => i._id.toString() === _id && i.selectedSize === Number(selectedSize)
+      (i) => i._id.toString() === _id && i.selectedSize === Number(selectedSize),
     );
 
     if (!item) return res.status(404).json({ error: "Item not found" });
 
     item.quantity = Number(quantity);
+    cart.items = await hydrateCartItems(cart.items);
     await cart.save();
     res.json({ cart: cart.items });
   } catch (err) {
