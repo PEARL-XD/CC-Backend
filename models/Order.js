@@ -22,6 +22,8 @@ const orderSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    packagingFee: { type: Number, default: 0 },
+    platformFee: { type: Number, default: 0 },
     totalAmount: { type: Number, required: true },
     razorpayOrderId: { type: String },
     paymentStatus: {

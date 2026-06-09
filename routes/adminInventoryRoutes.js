@@ -35,6 +35,8 @@ async function getOrCreateStorefrontSettings() {
         key: STOREFRONT_KEY,
         cookedEnabled: true,
         storeOpen: true,
+        packagingFee: 0,
+        platformFee: 0,
       },
     },
     { upsert: true, new: true }
@@ -58,6 +60,8 @@ router.get("/admin/inventory", async (req, res) => {
       settings: {
         cookedEnabled: settings?.cookedEnabled ?? true,
         storeOpen: settings?.storeOpen ?? true,
+        packagingFee: settings?.packagingFee ?? 0,
+        platformFee: settings?.platformFee ?? 0,
       },
       items,
     });
@@ -71,6 +75,8 @@ router.patch("/admin/storefront", async (req, res) => {
   try {
     const cookedEnabled = req.body.cookedEnabled;
     const storeOpen = req.body.storeOpen;
+    const packagingFee = req.body.packagingFee;
+    const platformFee = req.body.platformFee;
     const updates = { key: STOREFRONT_KEY };
 
     if ("cookedEnabled" in req.body) {
@@ -91,7 +97,32 @@ router.patch("/admin/storefront", async (req, res) => {
       updates.storeOpen = storeOpen;
     }
 
-    if (!("cookedEnabled" in updates) && !("storeOpen" in updates)) {
+    if ("packagingFee" in req.body) {
+      const parsedFee = Number(packagingFee);
+      if (!Number.isFinite(parsedFee) || parsedFee < 0) {
+        return res.status(400).json({
+          error: "packagingFee must be a valid number",
+        });
+      }
+      updates.packagingFee = parsedFee;
+    }
+
+    if ("platformFee" in req.body) {
+      const parsedFee = Number(platformFee);
+      if (!Number.isFinite(parsedFee) || parsedFee < 0) {
+        return res.status(400).json({
+          error: "platformFee must be a valid number",
+        });
+      }
+      updates.platformFee = parsedFee;
+    }
+
+    if (
+      !("cookedEnabled" in req.body) &&
+      !("storeOpen" in req.body) &&
+      !("packagingFee" in req.body) &&
+      !("platformFee" in req.body)
+    ) {
       return res.status(400).json({
         error: "No storefront setting provided",
       });
@@ -110,6 +141,8 @@ router.patch("/admin/storefront", async (req, res) => {
       settings: {
         cookedEnabled: settings.cookedEnabled,
         storeOpen: settings.storeOpen,
+        packagingFee: settings.packagingFee ?? 0,
+        platformFee: settings.platformFee ?? 0,
       },
     });
   } catch (err) {

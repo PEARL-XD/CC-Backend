@@ -67,6 +67,8 @@ async function getStorefrontSettings() {
   return {
     cookedEnabled: settings?.cookedEnabled ?? true,
     storeOpen: settings?.storeOpen ?? true,
+    packagingFee: settings?.packagingFee ?? 0,
+    platformFee: settings?.platformFee ?? 0,
   };
 }
 

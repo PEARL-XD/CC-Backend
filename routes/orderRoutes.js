@@ -67,6 +67,8 @@ const logOrderSummary = (label, order) => {
     orderStatus: order.orderStatus,
     paymentStatus: order.paymentStatus,
     totalAmount: order.totalAmount,
+    packagingFee: Number(order.packagingFee || 0),
+    platformFee: Number(order.platformFee || 0),
     itemCount: formatOrderItemCount(order),
     silentDelivery: Boolean(order.silentDelivery),
   });
@@ -371,6 +373,8 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
 
     const cookedEnabled = settings?.cookedEnabled ?? true;
     const storeOpen = settings?.storeOpen ?? true;
+    const packagingFee = Number(settings?.packagingFee || 0);
+    const platformFee = Number(settings?.platformFee || 0);
     const scheduleText = String(schedule || "").trim();
 
     if (!storeOpen && !scheduleText) {
@@ -437,12 +441,14 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       });
     }
 
-    const totalAmount = verifiedItems.reduce(
+    const subtotalAmount = verifiedItems.reduce(
       (sum, item) => sum + item.price * item.quantity,
       0
     );
 
-    if (totalAmount <= 0) {
+    const totalAmount = subtotalAmount + packagingFee + platformFee;
+
+    if (subtotalAmount <= 0 || totalAmount <= 0) {
       return res.status(400).json({ error: "Invalid order amount" });
     }
 
@@ -458,6 +464,8 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       user: req.user.id,
       items: verifiedItems,
       schedule: scheduleText || undefined,
+      packagingFee,
+      platformFee,
       totalAmount,
       razorpayOrderId: razorpayOrder.id,
       paymentStatus: "PENDING",
