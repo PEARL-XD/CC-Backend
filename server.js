@@ -35,7 +35,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(
   cors({
-    origin: ["https://localhost:5173","https://192.168.1.9:5173/","https://192.168.1.9:5173","https://cc-frontend-mhbl.onrender.com"],// frontend local (change later to prod)
+    origin: ["https://localhost:5173","https://192.168.1.9:5173/","https://192.168.1.9:5173","https://cc-frontend-mhbl.onrender.com","https://cleanchops.in"],// frontend local (change later to prod)
     credentials: true,
   })
 );
