@@ -83,6 +83,8 @@ const sendOrderStatusNotification = async (order, status) => {
   const body =
     status === "DELIVERED" && order.silentDelivery
       ? "Your order has been delivered and left at your door."
+      : status === "CANCELLED" && order.paymentStatus === "PAID"
+        ? "Your order has been cancelled. Your refund will be processed within 24-48 hours."
       : config.body;
 
   return sendPushToUser({
@@ -357,7 +359,6 @@ const canUserCancelOrder = (order) => {
   if (order.orderStatus === "DELIVERED") return false;
   if (order.orderStatus === "PACKED") return false;
   if (order.orderStatus === "OUT_FOR_DELIVERY") return false;
-  if (order.paymentStatus === "PAID") return false;
 
   return true;
 };
@@ -379,6 +380,13 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
 
     const silentDelivery =
       req.body.silentDelivery === true || req.body.silentDelivery === "true";
+
+    if (silentDelivery) {
+      return res.status(400).json({
+        error:
+          "Silent delivery is temporarily unavailable. Please turn it off to place your order.",
+      });
+    }
 
     if (!Array.isArray(cartItems) || cartItems.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
@@ -764,12 +772,38 @@ router.post("/orders/:id/cancel", authenticateToken, async (req, res) => {
       });
     }
 
-    await cancelOrderForPaymentIssue(order, "CANCELLED");
+    order.orderStatus = "CANCELLED";
+    order.paymentStatus = order.paymentStatus === "PAID" ? "PAID" : "CANCELLED";
+
+    const alreadyCancelled = order.statusTimeline?.some(
+      (entry) => entry.status === "CANCELLED",
+    );
+
+    if (!alreadyCancelled) {
+      order.statusTimeline.push({ status: "CANCELLED", time: new Date() });
+    }
+
+    await order.save();
     logOrderSummary("Order cancelled by user:", order);
+
+    await sendOrderStatusNotification(order, "CANCELLED")
+      .then((result) => {
+        console.log("Customer order cancellation notification result:", result);
+      })
+      .catch((error) => {
+        console.error("Customer order cancellation notification failed:", error);
+      });
 
     return res.json({
       success: true,
-      message: "Order cancelled",
+      message:
+        order.paymentStatus === "PAID"
+          ? "Order cancelled. Your refund will be processed within 24-48 hours."
+          : "Order cancelled.",
+      refundNote:
+        order.paymentStatus === "PAID"
+          ? "Your refund will be processed within 24-48 hours."
+          : null,
       order,
     });
   } catch (err) {
