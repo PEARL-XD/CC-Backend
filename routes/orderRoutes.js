@@ -381,13 +381,6 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     const silentDelivery =
       req.body.silentDelivery === true || req.body.silentDelivery === "true";
 
-    if (silentDelivery) {
-      return res.status(400).json({
-        error:
-          "Silent delivery is temporarily unavailable. Please turn it off to place your order.",
-      });
-    }
-
     if (!Array.isArray(cartItems) || cartItems.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
     }
@@ -404,6 +397,13 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     const packagingFee = Number(settings?.packagingFee || 0);
     const platformFee = Number(settings?.platformFee || 0);
     const scheduleText = String(schedule || "").trim();
+
+    if (silentDelivery && paymentMethod === "COD") {
+      return res.status(400).json({
+        error:
+          "Cash on delivery is not available with silent delivery. Please choose an online payment method.",
+      });
+    }
 
     if (!storeOpen && !scheduleText) {
       return res.status(400).json({
