@@ -67,6 +67,7 @@ const logOrderSummary = (label, order) => {
     userId: order.user?.toString?.() ?? String(order.user ?? ""),
     orderStatus: order.orderStatus,
     paymentStatus: order.paymentStatus,
+    paymentMethod: order.paymentMethod || "ONLINE",
     totalAmount: order.totalAmount,
     packagingFee: Number(order.packagingFee || 0),
     platformFee: Number(order.platformFee || 0),
@@ -104,16 +105,18 @@ const sendNewOrderAdminNotification = async (order) => {
   const amount = Number.isInteger(amountValue)
     ? String(amountValue)
     : amountValue.toFixed(2);
+  const paymentMethod = order.paymentMethod === "COD" ? "COD" : "online";
 
   return sendPushToAdmins({
     title: "New order received",
-    body: `Rs. ${amount} order placed with ${itemCount} item${itemCount === 1 ? "" : "s"}.`,
+    body: `Rs. ${amount} ${paymentMethod} order placed with ${itemCount} item${itemCount === 1 ? "" : "s"}.`,
     data: {
       type: "admin_order",
       route: "/admin",
       orderId: order._id.toString(),
       orderStatus: "PLACED",
       orderAmount: String(order.totalAmount ?? ""),
+      paymentMethod: order.paymentMethod || "ONLINE",
     },
   });
 };
@@ -347,6 +350,18 @@ const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
   await sendOrderStatusNotification(order, "CANCELLED");
 };
 
+const canUserCancelOrder = (order) => {
+  if (!order) return false;
+
+  if (order.orderStatus === "CANCELLED") return false;
+  if (order.orderStatus === "DELIVERED") return false;
+  if (order.orderStatus === "PACKED") return false;
+  if (order.orderStatus === "OUT_FOR_DELIVERY") return false;
+  if (order.paymentStatus === "PAID") return false;
+
+  return true;
+};
+
 /* ---------------- ROUTES ---------------- */
 
 /**
@@ -357,6 +372,10 @@ const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
 router.post("/orders/create", authenticateToken, async (req, res) => {
   try {
     const { cartItems, schedule } = req.body;
+    const requestedPaymentMethod = String(req.body.paymentMethod || "ONLINE")
+      .trim()
+      .toUpperCase();
+    const paymentMethod = requestedPaymentMethod === "COD" ? "COD" : "ONLINE";
 
     const silentDelivery =
       req.body.silentDelivery === true || req.body.silentDelivery === "true";
@@ -454,21 +473,25 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     }
 
     const amountInPaise = Math.round(totalAmount * 100);
+    let razorpayOrder = null;
 
-    const razorpayOrder = await razorpay.orders.create({
-      amount: amountInPaise,
-      currency: "INR",
-      receipt: `rcpt_${Date.now()}`,
-    });
+    if (paymentMethod === "ONLINE") {
+      razorpayOrder = await razorpay.orders.create({
+        amount: amountInPaise,
+        currency: "INR",
+        receipt: `rcpt_${Date.now()}`,
+      });
+    }
 
     const order = await Order.create({
       user: req.user.id,
       items: verifiedItems,
       schedule: scheduleText || undefined,
+      paymentMethod,
       packagingFee,
       platformFee,
       totalAmount,
-      razorpayOrderId: razorpayOrder.id,
+      razorpayOrderId: razorpayOrder?.id,
       paymentStatus: "PENDING",
       orderStatus: "PLACED",
       silentDelivery,
@@ -487,11 +510,20 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
 
     return res.json({
       success: true,
-      razorpayKeyId: process.env.RAZORPAY_KEY_ID,
-      amount: amountInPaise,
-      currency: "INR",
-      razorpayOrderId: razorpayOrder.id,
       localOrderId: order._id,
+      paymentMethod,
+      requiresPayment: paymentMethod === "ONLINE",
+      ...(paymentMethod === "ONLINE"
+        ? {
+            razorpayKeyId: process.env.RAZORPAY_KEY_ID,
+            amount: amountInPaise,
+            currency: "INR",
+            razorpayOrderId: razorpayOrder.id,
+          }
+        : {
+            amount: amountInPaise,
+            currency: "INR",
+          }),
     });
   } catch (err) {
     console.error("Create order error:", err);
@@ -707,6 +739,42 @@ router.post("/orders/payment-failed", authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("Payment failure update error:", err);
     res.status(500).json({ error: "Failed to update payment status" });
+  }
+});
+
+/**
+ * POST /api/orders/:id/cancel
+ * Auth: user
+ */
+router.post("/orders/:id/cancel", authenticateToken, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    if (order.user.toString() !== req.user.id) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    if (!canUserCancelOrder(order)) {
+      return res.status(409).json({
+        error:
+          "This order can no longer be cancelled. Please contact support if you need help.",
+      });
+    }
+
+    await cancelOrderForPaymentIssue(order, "CANCELLED");
+    logOrderSummary("Order cancelled by user:", order);
+
+    return res.json({
+      success: true,
+      message: "Order cancelled",
+      order,
+    });
+  } catch (err) {
+    console.error("Cancel order error:", err);
+    return res.status(500).json({ error: "Failed to cancel order" });
   }
 });
 
