@@ -2,6 +2,7 @@ import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
 import User from "../models/User.js";
 import DeviceToken from "../models/DeviceToken.js";
+import NotificationReceipt from "../models/NotificationReceipt.js";
 
 function getFirebaseApp() {
   if (getApps().length) return getApps()[0];
@@ -36,12 +37,18 @@ function normalizeData(data = {}) {
 
 export async function sendPushToTokens({ tokens, title, body, data = {} }) {
   if (!tokens?.length) {
-    return { successCount: 0, failureCount: 0 };
+    return {
+      successCount: 0,
+      failureCount: 0,
+      successTokens: [],
+      failureTokens: [],
+    };
   }
 
   getFirebaseApp();
   const messaging = getMessaging();
   const failedTokens = [];
+  const successTokens = [];
   let successCount = 0;
   let failureCount = 0;
 
@@ -77,13 +84,20 @@ export async function sendPushToTokens({ tokens, title, body, data = {} }) {
         ) {
           failedTokens.push(tokenBatch[index]);
         }
+      } else {
+        successTokens.push(tokenBatch[index]);
       }
     });
   }
 
   await removeInvalidTokens(failedTokens);
 
-  return { successCount, failureCount };
+  return {
+    successCount,
+    failureCount,
+    successTokens,
+    failureTokens: failedTokens,
+  };
 }
 
 export async function sendPushToUser({
@@ -131,17 +145,63 @@ export async function sendPushToAdmins({
 
 export async function sendPromoBroadcast({ title, body, route = "/home" }) {
   const docs = await DeviceToken.find({ promoEnabled: { $ne: false } })
-    .select("token")
+    .select("token user platform")
     .lean();
-  const tokens = [...new Set(docs.map((doc) => doc.token).filter(Boolean))];
+  const uniqueDocs = [];
+  const seen = new Set();
 
-  return sendPushToTokens({
+  for (const doc of docs) {
+    const token = doc.token?.trim();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    uniqueDocs.push(doc);
+  }
+
+  const notificationId = `promo_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+  const tokens = uniqueDocs.map((doc) => doc.token).filter(Boolean);
+
+  const result = await sendPushToTokens({
     tokens,
     title,
     body,
     data: {
       type: "promo",
+      notificationId,
       route,
     },
   });
+
+  if (result.successTokens.length) {
+    const tokenToDoc = new Map(uniqueDocs.map((doc) => [doc.token, doc]));
+
+    await NotificationReceipt.insertMany(
+      result.successTokens
+        .map((token) => {
+        const recipient = tokenToDoc.get(token);
+        if (!recipient) return null;
+        return {
+          notificationId,
+          user: recipient.user,
+          token,
+          platform: recipient.platform,
+          type: "promo",
+          route,
+          title,
+          body,
+          status: "SENT",
+          sentAt: new Date(),
+        };
+      })
+        .filter(Boolean),
+      { ordered: false },
+    ).catch(() => {});
+  }
+
+  return {
+    ...result,
+    notificationId,
+    targetCount: tokens.length,
+  };
 }
