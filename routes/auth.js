@@ -234,9 +234,19 @@ router.post("/register", authLimiter, async (req, res) => {
     const password = req.body.password ?? "";
     const society = normalizeText(req.body.society);
     const tower = normalizeText(req.body.tower);
+    const floor = normalizeText(req.body.floor);
     const flat = normalizeText(req.body.flat);
 
-    if (!name || !email || !phone || !password || !society || !tower || !flat) {
+    if (
+      !name ||
+      !email ||
+      !phone ||
+      !password ||
+      !society ||
+      !tower ||
+      !floor ||
+      !flat
+    ) {
       return res.status(400).json({ error: "All fields are required." });
     }
 
@@ -279,6 +289,7 @@ router.post("/register", authLimiter, async (req, res) => {
       passwordHash,
       society,
       tower,
+      floor,
       flat,
     });
 
@@ -293,6 +304,7 @@ router.post("/register", authLimiter, async (req, res) => {
         phone: user.phone,
         society: user.society,
         tower: user.tower,
+        floor: user.floor,
         flat: user.flat,
       },
     });
@@ -349,6 +361,7 @@ router.post("/login", authLimiter, async (req, res) => {
         phone: user.phone,
         society: user.society,
         tower: user.tower,
+        floor: user.floor,
         flat: user.flat,
       },
     });
@@ -426,6 +439,8 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
       req.body.society !== undefined ? normalizeText(req.body.society) : undefined;
     const tower =
       req.body.tower !== undefined ? normalizeText(req.body.tower) : undefined;
+    const floor =
+      req.body.floor !== undefined ? normalizeText(req.body.floor) : undefined;
     const flat =
       req.body.flat !== undefined ? normalizeText(req.body.flat) : undefined;
     const avatarStyle = normalizeAvatarStyle(req.body.avatarStyle);
@@ -452,6 +467,10 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
 
     if (tower !== undefined && !tower) {
       return res.status(400).json({ error: "Tower cannot be empty." });
+    }
+
+    if (floor !== undefined && !floor) {
+      return res.status(400).json({ error: "Floor cannot be empty." });
     }
 
     if (flat !== undefined && !flat) {
@@ -481,6 +500,7 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     const updates = { name, email, phone };
     if (society !== undefined) updates.society = society;
     if (tower !== undefined) updates.tower = tower;
+    if (floor !== undefined) updates.floor = floor;
     if (flat !== undefined) updates.flat = flat;
     if (avatarStyle !== undefined) updates.avatarStyle = avatarStyle;
 

@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, required: true, unique: true },
     passwordHash: { type: String, required: true },
     tower: { type: String, required: true },
+    floor: { type: String, default: "" },
     flat: { type: String, required: true },
     society: { type: String, required: true },
     passwordResetCodeHash: {
