@@ -80,6 +80,27 @@ function normalizeText(value) {
   return value?.trim() ?? "";
 }
 
+function normalizePhone(value) {
+  const digits = normalizeText(value).replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
+  }
+  return digits;
+}
+
+function buildLoosePhoneRegex(phone) {
+  const digits = normalizePhone(phone);
+  if (!digits) return null;
+
+  const pattern = digits
+    .split("")
+    .map((digit) => digit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\D*");
+
+  return new RegExp(`.*${pattern}`);
+}
+
 function normalizeAvatarStyle(value) {
   if (value === undefined) return undefined;
   const avatarStyle = normalizeText(value).toLowerCase();
@@ -230,7 +251,7 @@ router.post("/register", authLimiter, async (req, res) => {
   try {
     const name = normalizeText(req.body.name);
     const email = normalizeEmail(req.body.email);
-    const phone = normalizeText(req.body.phone);
+    const phone = normalizePhone(req.body.phone);
     const password = req.body.password ?? "";
     const society = normalizeText(req.body.society);
     const tower = normalizeText(req.body.tower);
@@ -317,24 +338,59 @@ router.post("/register", authLimiter, async (req, res) => {
 // POST /login
 router.post("/login", authLimiter, async (req, res) => {
   try {
-    const phone = normalizeText(req.body.phone);
+    const phoneInput = normalizeText(req.body.phone);
+    const phone = normalizePhone(phoneInput);
     const password = req.body.password ?? "";
 
+    console.log("Login request received", {
+      phoneInput,
+      phoneNormalized: phone,
+      ip: req.ip,
+      userAgent: req.get("user-agent"),
+    });
+
     if (!phone || !password) {
+      console.log("Login rejected: missing phone or password", {
+        phoneInput,
+        phoneNormalized: phone,
+      });
       return res
         .status(400)
         .json({ error: "Phone and password are required." });
     }
 
-    const user = await User.findOne({ phone });
+    const phoneRegex = buildLoosePhoneRegex(phoneInput);
+    const user = await User.findOne({
+      $or: [
+        { phone },
+        ...(phoneInput ? [{ phone: phoneInput }] : []),
+        ...(phoneRegex ? [{ phone: phoneRegex }] : []),
+      ],
+    });
     if (!user) {
-      return res.status(401).json({ error: "Invalid phone or password." });
+      console.log("Login failed: user not found", {
+        phoneInput,
+        phoneNormalized: phone,
+      });
+      return res
+        .status(404)
+        .json({ error: "No account found for this phone number." });
     }
 
     const passwordValid = await bcrypt.compare(password, user.passwordHash);
     if (!passwordValid) {
-      return res.status(401).json({ error: "Invalid phone or password." });
+      console.log("Login failed: password mismatch", {
+        userId: user._id.toString(),
+        phoneInput,
+        phoneNormalized: phone,
+      });
+      return res.status(401).json({ error: "Incorrect password." });
     }
+
+    console.log("Login password matched", {
+      userId: user._id.toString(),
+      phoneNormalized: phone,
+    });
 
     if (!process.env.ACCESS_TOKEN_SECRET || !process.env.REFRESH_TOKEN_SECRET) {
       throw new Error("JWT secret keys are not set in environment variables.");
@@ -349,7 +405,17 @@ router.post("/login", authLimiter, async (req, res) => {
       expiresAt: new Date(Date.now() + REFRESH_TOKEN_MAX_AGE_MS),
     });
 
+    console.log("JWT tokens created", {
+      userId: user._id.toString(),
+      accessTokenTtl: ACCESS_TOKEN_TTL,
+      refreshTokenTtl: REFRESH_TOKEN_TTL,
+    });
+
     res.cookie("refreshToken", refreshToken, refreshCookieOptions);
+    console.log("Login success", {
+      userId: user._id.toString(),
+      phoneNormalized: phone,
+    });
 
     return res.status(200).json({
       message: "Login successful.",
@@ -367,7 +433,7 @@ router.post("/login", authLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error);
-    return res.status(500).json({ error: "Server error." });
+    return res.status(500).json({ error: "Server error during login." });
   }
 });
 
@@ -434,7 +500,7 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
 
     const name = normalizeText(req.body.name);
     const email = normalizeEmail(req.body.email);
-    const phone = normalizeText(req.body.phone);
+    const phone = normalizePhone(req.body.phone);
     const society =
       req.body.society !== undefined ? normalizeText(req.body.society) : undefined;
     const tower =
