@@ -17,6 +17,11 @@ const PUBLIC_SUPPORT_TOPICS = new Set([
   "Payment issue",
   "Product quality",
   "General question",
+  "Login issue",
+  "Network issue",
+  "Password issue",
+  "Number issue",
+  "Other issue",
 ]);
 
 // Max 5 support tickets per user per 10 minutes
