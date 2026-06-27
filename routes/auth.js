@@ -265,7 +265,6 @@ router.post("/register", authLimiter, async (req, res) => {
       !password ||
       !society ||
       !tower ||
-      !floor ||
       !flat
     ) {
       return res.status(400).json({ error: "All fields are required." });

@@ -1,5 +1,7 @@
 import express from "express";
+import AppOpenAnonymousDaily from "../models/AppOpenAnonymousDaily.js";
 import DeviceToken from "../models/DeviceToken.js";
+import AppOpenDaily from "../models/AppOpenDaily.js";
 import NotificationReceipt from "../models/NotificationReceipt.js";
 import User from "../models/User.js";
 import { authenticateToken } from "./auth.js";
@@ -11,6 +13,96 @@ const isAdmin = async (req) => {
   const user = await User.findById(req.user.id).select("role").lean();
   return user?.role === "admin";
 };
+
+function getIstDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === "year")?.value || "0000";
+  const month = parts.find((part) => part.type === "month")?.value || "00";
+  const day = parts.find((part) => part.type === "day")?.value || "00";
+
+  return `${year}-${month}-${day}`;
+}
+
+router.post("/app-opens/track", authenticateToken, async (req, res) => {
+  try {
+    const now = new Date();
+    const dateKey = getIstDateKey(now);
+
+    const doc = await AppOpenDaily.findOneAndUpdate(
+      {
+        user: req.user.id,
+        dateKey,
+      },
+      {
+        $inc: { openCount: 1 },
+        $set: {
+          lastOpenedAt: now,
+        },
+        $setOnInsert: {
+          user: req.user.id,
+          dateKey,
+          firstOpenedAt: now,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      },
+    ).populate("user", "name phone society tower flat");
+
+    return res.json({
+      success: true,
+      dateKey,
+      loggedInOpenCount: doc.openCount,
+      openCount: doc.openCount,
+    });
+  } catch (error) {
+    console.error("App open track error:", error);
+    return res.status(500).json({ error: "Failed to track app open." });
+  }
+});
+
+router.post("/app-opens/track-anonymous", async (req, res) => {
+  try {
+    const now = new Date();
+    const dateKey = getIstDateKey(now);
+
+    const doc = await AppOpenAnonymousDaily.findOneAndUpdate(
+      { dateKey },
+      {
+        $inc: { openCount: 1 },
+        $set: {
+          lastOpenedAt: now,
+        },
+        $setOnInsert: {
+          dateKey,
+          firstOpenedAt: now,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      },
+    );
+
+    return res.json({
+      success: true,
+      dateKey,
+      openCount: doc.openCount,
+    });
+  } catch (error) {
+    console.error("Anonymous app open track error:", error);
+    return res.status(500).json({ error: "Failed to track anonymous app open." });
+  }
+});
 
 router.post("/notifications/device-token", authenticateToken, async (req, res) => {
   try {
@@ -288,5 +380,50 @@ router.get(
     }
   },
 );
+
+router.get("/admin/app-opens/daily", authenticateToken, async (req, res) => {
+  try {
+    if (!(await isAdmin(req))) {
+      return res.status(403).json({ error: "Admin access only" });
+    }
+
+    const dateKey = String(req.query.dateKey || getIstDateKey()).trim();
+    const [docs, anonymousDoc] = await Promise.all([
+      AppOpenDaily.find({ dateKey })
+        .populate("user", "name phone society tower flat")
+        .sort({ openCount: -1, lastOpenedAt: -1 })
+        .lean(),
+      AppOpenAnonymousDaily.findOne({ dateKey }).lean(),
+    ]);
+
+    const entries = docs.map((doc) => ({
+      userId: doc.user?._id?.toString?.() || doc.user?.toString?.() || "",
+      name: doc.user?.name || "Unknown",
+      phone: doc.user?.phone || "",
+      society: doc.user?.society || "",
+      tower: doc.user?.tower || "",
+      flat: doc.user?.flat || "",
+      openCount: doc.openCount || 0,
+      firstOpenedAt: doc.firstOpenedAt || null,
+      lastOpenedAt: doc.lastOpenedAt || null,
+    }));
+
+    const totalOpens = entries.reduce((sum, entry) => sum + entry.openCount, 0);
+
+    return res.json({
+      success: true,
+      dateKey,
+      anonymousOpenCount: anonymousDoc?.openCount || 0,
+      loggedInOpenCount: totalOpens,
+      totalAppOpens: totalOpens + (anonymousDoc?.openCount || 0),
+      totalOpens,
+      uniqueUsers: entries.length,
+      entries,
+    });
+  } catch (error) {
+    console.error("Daily app opens fetch error:", error);
+    return res.status(500).json({ error: "Failed to load app open stats." });
+  }
+});
 
 export default router;
