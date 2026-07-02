@@ -37,6 +37,10 @@ async function getOrCreateStorefrontSettings() {
         storeOpen: true,
         packagingFee: 0,
         platformFee: 0,
+        bannerEnabled: false,
+        bannerTitle: "",
+        bannerMessage: "",
+        bannerTone: "info",
       },
     },
     { upsert: true, new: true }
@@ -62,6 +66,10 @@ router.get("/admin/inventory", async (req, res) => {
         storeOpen: settings?.storeOpen ?? true,
         packagingFee: settings?.packagingFee ?? 0,
         platformFee: settings?.platformFee ?? 0,
+        bannerEnabled: settings?.bannerEnabled ?? false,
+        bannerTitle: settings?.bannerTitle ?? "",
+        bannerMessage: settings?.bannerMessage ?? "",
+        bannerTone: settings?.bannerTone ?? "info",
       },
       items,
     });
@@ -77,6 +85,10 @@ router.patch("/admin/storefront", async (req, res) => {
     const storeOpen = req.body.storeOpen;
     const packagingFee = req.body.packagingFee;
     const platformFee = req.body.platformFee;
+    const bannerEnabled = req.body.bannerEnabled;
+    const bannerTitle = req.body.bannerTitle;
+    const bannerMessage = req.body.bannerMessage;
+    const bannerTone = req.body.bannerTone;
     const updates = { key: STOREFRONT_KEY };
 
     if ("cookedEnabled" in req.body) {
@@ -117,11 +129,59 @@ router.patch("/admin/storefront", async (req, res) => {
       updates.platformFee = parsedFee;
     }
 
+    if ("bannerEnabled" in req.body) {
+      if (typeof bannerEnabled !== "boolean") {
+        return res.status(400).json({
+          error: "bannerEnabled must be true or false",
+        });
+      }
+      updates.bannerEnabled = bannerEnabled;
+    }
+
+    if ("bannerTitle" in req.body) {
+      if (typeof bannerTitle !== "string") {
+        return res.status(400).json({
+          error: "bannerTitle must be a string",
+        });
+      }
+      updates.bannerTitle = bannerTitle.trim();
+    }
+
+    if ("bannerMessage" in req.body) {
+      if (typeof bannerMessage !== "string") {
+        return res.status(400).json({
+          error: "bannerMessage must be a string",
+        });
+      }
+      updates.bannerMessage = bannerMessage.trim();
+    }
+
+    if ("bannerTone" in req.body) {
+      if (typeof bannerTone !== "string") {
+        return res.status(400).json({
+          error: "bannerTone must be a string",
+        });
+      }
+
+      const normalizedTone = bannerTone.trim().toLowerCase();
+      const allowedTones = new Set(["info", "offer", "maintenance", "new"]);
+      if (!allowedTones.has(normalizedTone)) {
+        return res.status(400).json({
+          error: "bannerTone must be one of: info, offer, maintenance, new",
+        });
+      }
+      updates.bannerTone = normalizedTone;
+    }
+
     if (
       !("cookedEnabled" in req.body) &&
       !("storeOpen" in req.body) &&
       !("packagingFee" in req.body) &&
-      !("platformFee" in req.body)
+      !("platformFee" in req.body) &&
+      !("bannerEnabled" in req.body) &&
+      !("bannerTitle" in req.body) &&
+      !("bannerMessage" in req.body) &&
+      !("bannerTone" in req.body)
     ) {
       return res.status(400).json({
         error: "No storefront setting provided",
@@ -143,6 +203,10 @@ router.patch("/admin/storefront", async (req, res) => {
         storeOpen: settings.storeOpen,
         packagingFee: settings.packagingFee ?? 0,
         platformFee: settings.platformFee ?? 0,
+        bannerEnabled: settings.bannerEnabled ?? false,
+        bannerTitle: settings.bannerTitle ?? "",
+        bannerMessage: settings.bannerMessage ?? "",
+        bannerTone: settings.bannerTone ?? "info",
       },
     });
   } catch (err) {

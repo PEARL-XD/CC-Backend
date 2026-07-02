@@ -7,6 +7,10 @@ const storefrontSettingsSchema = new mongoose.Schema(
     storeOpen: { type: Boolean, default: true },
     packagingFee: { type: Number, default: 0 },
     platformFee: { type: Number, default: 0 },
+    bannerEnabled: { type: Boolean, default: false },
+    bannerTitle: { type: String, default: "" },
+    bannerMessage: { type: String, default: "" },
+    bannerTone: { type: String, default: "info" },
   },
   { timestamps: true }
 );

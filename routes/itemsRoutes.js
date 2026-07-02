@@ -69,6 +69,10 @@ async function getStorefrontSettings() {
     storeOpen: settings?.storeOpen ?? true,
     packagingFee: settings?.packagingFee ?? 0,
     platformFee: settings?.platformFee ?? 0,
+    bannerEnabled: settings?.bannerEnabled ?? false,
+    bannerTitle: settings?.bannerTitle ?? "",
+    bannerMessage: settings?.bannerMessage ?? "",
+    bannerTone: settings?.bannerTone ?? "info",
   };
 }
 
