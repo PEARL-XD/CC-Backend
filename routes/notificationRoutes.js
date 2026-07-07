@@ -5,7 +5,10 @@ import AppOpenDaily from "../models/AppOpenDaily.js";
 import NotificationReceipt from "../models/NotificationReceipt.js";
 import User from "../models/User.js";
 import { authenticateToken } from "./auth.js";
-import { sendPromoBroadcast } from "../utils/pushNotifications.js";
+import {
+  sendPromoBroadcast,
+  sendTargetedPromoNotification,
+} from "../utils/pushNotifications.js";
 
 const router = express.Router();
 
@@ -13,6 +16,18 @@ const isAdmin = async (req) => {
   const user = await User.findById(req.user.id).select("role").lean();
   return user?.role === "admin";
 };
+
+function escapeRegex(value = "") {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizePhone(value = "") {
+  const digits = String(value).replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
+  }
+  return digits;
+}
 
 function getIstDateKey(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -320,16 +335,123 @@ router.post("/admin/notifications/broadcast", authenticateToken, async (req, res
     const title = String(req.body.title || "").trim();
     const body = String(req.body.body || "").trim();
     const route = String(req.body.route || "/home").trim();
+    const targetType = String(req.body.targetType || "all").trim().toLowerCase();
+    const target = String(req.body.target || "").trim();
+
+    console.log("Admin broadcast requested", {
+      targetType,
+      targetPreview: target.length > 32 ? `${target.slice(0, 32)}...` : target,
+      route,
+    });
 
     if (!title || !body) {
       return res.status(400).json({ error: "Title and body are required." });
     }
 
-    const result = await sendPromoBroadcast({ title, body, route });
+    let result;
+
+    if (targetType === "all") {
+      result = await sendPromoBroadcast({ title, body, route });
+    } else {
+      let users = [];
+      if (targetType === "single") {
+        if (!target) {
+          return res.status(400).json({
+            error: "Target phone or user id is required for single-user sends.",
+          });
+        }
+        const normalizedPhone = normalizePhone(target);
+        const lookup = {
+          $or: [],
+        };
+        if (normalizedPhone) {
+          lookup.$or.push({ phone: normalizedPhone });
+          lookup.$or.push({ phone: target });
+        }
+        if (/^[a-f\d]{24}$/i.test(target)) {
+          lookup.$or.push({ _id: target });
+        }
+
+        users = await User.find(lookup)
+          .select("_id name phone society tower floor flat")
+          .lean();
+
+        console.log("Single-user broadcast resolved", {
+          matchedUsers: users.length,
+          matchedUserIds: users.map((user) => user._id?.toString?.()).filter(Boolean),
+        });
+
+        if (!users.length) {
+          return res.status(404).json({
+            error: "No user found for the provided phone or user id.",
+          });
+        }
+      } else if (targetType === "society") {
+        if (!target) {
+          return res.status(400).json({
+            error: "Society is required for society targeting.",
+          });
+        }
+        users = await User.find({
+          society: new RegExp(`^${escapeRegex(target)}$`, "i"),
+        })
+          .select("_id name phone society tower floor flat")
+          .lean();
+        console.log("Society broadcast resolved", {
+          matchedUsers: users.length,
+          target,
+        });
+      } else if (targetType === "tower") {
+        if (!target) {
+          return res.status(400).json({
+            error: "Tower is required for tower targeting.",
+          });
+        }
+        users = await User.find({
+          tower: new RegExp(`^${escapeRegex(target)}$`, "i"),
+        })
+          .select("_id name phone society tower floor flat")
+          .lean();
+        console.log("Tower broadcast resolved", {
+          matchedUsers: users.length,
+          target,
+        });
+      } else if (targetType === "floor") {
+        if (!target) {
+          return res.status(400).json({
+            error: "Floor is required for floor targeting.",
+          });
+        }
+        users = await User.find({
+          floor: new RegExp(`^${escapeRegex(target)}$`, "i"),
+        })
+          .select("_id name phone society tower floor flat")
+          .lean();
+        console.log("Floor broadcast resolved", {
+          matchedUsers: users.length,
+          target,
+        });
+      } else {
+        return res.status(400).json({
+          error: "Invalid targetType. Use all, single, society, tower, or floor.",
+        });
+      }
+
+      result = await sendTargetedPromoNotification({
+        title,
+        body,
+        route,
+        users,
+      });
+    }
 
     return res.json({
       success: true,
       message: "Broadcast sent.",
+      audience: {
+        targetType,
+        target: targetType === "all" ? "" : target,
+      },
       result,
     });
   } catch (error) {

@@ -196,9 +196,10 @@ router.post("/refresh-token", refreshTokenLimiter, async (req, res) => {
       return res.status(404).json({ error: "User not found." });
     }
 
-    await RefreshToken.updateMany(
-      { userId: user._id, revoked: false },
+    await RefreshToken.findOneAndUpdate(
+      { token, revoked: false },
       { revoked: true },
+      { new: false }
     );
 
     const accessToken = signAccessToken(user);

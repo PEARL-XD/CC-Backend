@@ -35,6 +35,23 @@ function normalizeData(data = {}) {
   );
 }
 
+function personalizeText(template = "", user = {}) {
+  const replacements = {
+    "{{name}}": user.name || "there",
+    "{{phone}}": user.phone || "",
+    "{{society}}": user.society || "",
+    "{{tower}}": user.tower || "",
+    "{{floor}}": user.floor || "",
+    "{{flat}}": user.flat || "",
+  };
+
+  let text = String(template || "");
+  for (const [needle, replacement] of Object.entries(replacements)) {
+    text = text.replaceAll(needle, replacement);
+  }
+  return text;
+}
+
 export async function sendPushToTokens({ tokens, title, body, data = {} }) {
   if (!tokens?.length) {
     return {
@@ -123,6 +140,72 @@ export async function sendPushToUser({
   return sendPushToTokens({ tokens, title, body, data });
 }
 
+async function sendPersonalizedPush({
+  token,
+  user,
+  title,
+  body,
+  data = {},
+  notificationType = "promo",
+  route = "/home",
+}) {
+  getFirebaseApp();
+  const messaging = getMessaging();
+
+  const personalizedTitle = personalizeText(title, user);
+  const personalizedBody = personalizeText(body, user);
+
+  try {
+    const response = await messaging.send({
+      token,
+      notification: {
+        title: personalizedTitle,
+        body: personalizedBody,
+      },
+      data: normalizeData({
+        ...data,
+        type: notificationType,
+        route,
+      }),
+      android: {
+        priority: "high",
+        notification: {
+          channelId: "cleanchops_high_importance",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+          },
+        },
+      },
+    });
+
+    return {
+      success: true,
+      messageId: response,
+      title: personalizedTitle,
+      body: personalizedBody,
+    };
+  } catch (error) {
+    const code = error?.code || "";
+    if (
+      code.includes("registration-token-not-registered") ||
+      code.includes("invalid-registration-token")
+    ) {
+      await DeviceToken.deleteMany({ token });
+    }
+
+    return {
+      success: false,
+      error,
+      title: personalizedTitle,
+      body: personalizedBody,
+    };
+  }
+}
+
 export async function sendPushToAdmins({
   title,
   body,
@@ -203,5 +286,116 @@ export async function sendPromoBroadcast({ title, body, route = "/home" }) {
     ...result,
     notificationId,
     targetCount: tokens.length,
+  };
+}
+
+export async function sendTargetedPromoNotification({
+  title,
+  body,
+  route = "/home",
+  userQuery = {},
+  users: providedUsers = [],
+}) {
+  const users = Array.isArray(providedUsers) && providedUsers.length
+    ? providedUsers
+    : await User.find({
+        ...userQuery,
+        ...(Object.keys(userQuery).length === 0 ? { role: { $ne: "admin" } } : {}),
+      })
+        .select("_id name phone society tower floor flat")
+        .lean();
+
+  if (!users.length) {
+    return {
+      successCount: 0,
+      failureCount: 0,
+      successTokens: [],
+      failureTokens: [],
+      notificationId: null,
+      targetCount: 0,
+    };
+  }
+
+  const userIds = users.map((user) => user._id).filter(Boolean);
+  const docs = await DeviceToken.find({
+    user: { $in: userIds },
+    promoEnabled: { $ne: false },
+  })
+    .select("token user platform")
+    .lean();
+
+  const tokenToUser = new Map(users.map((user) => [user._id.toString(), user]));
+  const uniqueDocs = [];
+  const seen = new Set();
+
+  for (const doc of docs) {
+    const token = doc.token?.trim();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    uniqueDocs.push(doc);
+  }
+
+  const notificationId = `promo_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+  const successTokens = [];
+  const failureTokens = [];
+
+  for (const doc of uniqueDocs) {
+    const user = tokenToUser.get(doc.user?.toString?.() || "");
+    if (!user) continue;
+
+    const result = await sendPersonalizedPush({
+      token: doc.token,
+      user,
+      title,
+      body,
+      route,
+      notificationType: "promo",
+    });
+
+    if (result.success) {
+      successTokens.push(doc.token);
+    } else {
+      failureTokens.push(doc.token);
+    }
+  }
+
+  if (successTokens.length) {
+    const tokenToDoc = new Map(uniqueDocs.map((doc) => [doc.token, doc]));
+
+    await NotificationReceipt.insertMany(
+      successTokens
+        .map((token) => {
+          const recipient = tokenToDoc.get(token);
+          if (!recipient) return null;
+          const user = tokenToUser.get(recipient.user?.toString?.() || "");
+          if (!user) return null;
+
+          return {
+            notificationId,
+            user: recipient.user,
+            token,
+            platform: recipient.platform,
+            type: "promo",
+            route,
+            title: personalizeText(title, user),
+            body: personalizeText(body, user),
+            status: "SENT",
+            sentAt: new Date(),
+          };
+        })
+        .filter(Boolean),
+      { ordered: false },
+    ).catch(() => {});
+  }
+
+  return {
+    successCount: successTokens.length,
+    failureCount: failureTokens.length,
+    successTokens,
+    failureTokens,
+    notificationId,
+    targetCount: uniqueDocs.length,
   };
 }
