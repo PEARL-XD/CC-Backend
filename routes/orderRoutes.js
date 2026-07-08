@@ -7,6 +7,10 @@ import { authenticateToken } from "./auth.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
 import { sendPushToAdmins, sendPushToUser } from "../utils/pushNotifications.js";
 import { calculatePackPrice } from "../utils/packPricing.js";
+import {
+  validateCouponForUser,
+  redeemCouponForOrder,
+} from "../utils/coupons.js";
 
 const router = express.Router();
 
@@ -377,6 +381,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       .trim()
       .toUpperCase();
     const paymentMethod = requestedPaymentMethod === "COD" ? "COD" : "ONLINE";
+    const couponCode = String(req.body.couponCode || "").trim();
 
     const silentDelivery =
       req.body.silentDelivery === true || req.body.silentDelivery === "true";
@@ -474,7 +479,32 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       0
     );
 
-    const totalAmount = subtotalAmount + packagingFee + platformFee;
+    let coupon = null;
+    let couponDiscountAmount = 0;
+    const validatedCouponCode = couponCode ? couponCode.toUpperCase().replace(/\s+/g, "") : "";
+
+    if (validatedCouponCode) {
+      const couponResult = await validateCouponForUser({
+        code: validatedCouponCode,
+        userId: req.user.id,
+        subtotalAmount,
+      });
+
+      if (!couponResult.ok) {
+        return res.status(couponResult.statusCode).json({
+          error: couponResult.error,
+        });
+      }
+
+      coupon = couponResult.coupon;
+      couponDiscountAmount = couponResult.discountAmount;
+    }
+
+    const discountedSubtotal = Math.max(
+      0,
+      Math.round((subtotalAmount - couponDiscountAmount) * 100) / 100,
+    );
+    const totalAmount = discountedSubtotal + packagingFee + platformFee;
 
     if (subtotalAmount <= 0 || totalAmount <= 0) {
       return res.status(400).json({ error: "Invalid order amount" });
@@ -496,6 +526,9 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       items: verifiedItems,
       schedule: scheduleText || undefined,
       paymentMethod,
+      couponCode: coupon?.code,
+      couponId: coupon?._id,
+      couponDiscountAmount,
       packagingFee,
       platformFee,
       totalAmount,
@@ -505,6 +538,23 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       silentDelivery,
       statusTimeline: [{ status: "PLACED", time: new Date() }],
     });
+
+    if (coupon) {
+      try {
+        await redeemCouponForOrder({
+          coupon,
+          userId: req.user.id,
+          orderId: order._id,
+          discountAmount: couponDiscountAmount,
+        });
+      } catch (couponError) {
+        console.error("Coupon redemption failed:", couponError);
+        await Order.findByIdAndDelete(order._id).catch(() => {});
+        return res.status(500).json({
+          error: "Failed to apply coupon. Please try again.",
+        });
+      }
+    }
 
     logOrderSummary("Order created:", order);
 
@@ -532,6 +582,13 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
             amount: amountInPaise,
             currency: "INR",
           }),
+      coupon: coupon
+        ? {
+            code: coupon.code,
+            discountAmount: couponDiscountAmount,
+            totalAfterDiscount: totalAmount,
+          }
+        : null,
     });
   } catch (err) {
     console.error("Create order error:", err);

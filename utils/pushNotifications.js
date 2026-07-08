@@ -52,6 +52,98 @@ function personalizeText(template = "", user = {}) {
   return text;
 }
 
+function dedupeTokenDocs(docs = []) {
+  const uniqueDocs = [];
+  const seen = new Set();
+
+  for (const doc of docs) {
+    const token = doc.token?.trim();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    uniqueDocs.push(doc);
+  }
+
+  return uniqueDocs;
+}
+
+async function sendPersonalizedPromoNotifications({
+  docs = [],
+  users = [],
+  title,
+  body,
+  route = "/home",
+  notificationId = `promo_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+}) {
+  const uniqueDocs = dedupeTokenDocs(docs);
+  const tokenToUser = new Map(users.map((user) => [user._id.toString(), user]));
+  const successTokens = [];
+  const failureTokens = [];
+
+  for (const doc of uniqueDocs) {
+    const token = doc.token?.trim();
+    if (!token) continue;
+
+    const user = tokenToUser.get(doc.user?.toString?.() || "");
+    if (!user) {
+      failureTokens.push(token);
+      continue;
+    }
+
+    const result = await sendPersonalizedPush({
+      token,
+      user,
+      title,
+      body,
+      route,
+      notificationType: "promo",
+    });
+
+    if (result.success) {
+      successTokens.push(token);
+    } else {
+      failureTokens.push(token);
+    }
+  }
+
+  if (successTokens.length) {
+    const tokenToDoc = new Map(uniqueDocs.map((doc) => [doc.token, doc]));
+
+    await NotificationReceipt.insertMany(
+      successTokens
+        .map((token) => {
+          const recipient = tokenToDoc.get(token);
+          if (!recipient) return null;
+          const user = tokenToUser.get(recipient.user?.toString?.() || "");
+          if (!user) return null;
+
+          return {
+            notificationId,
+            user: recipient.user,
+            token,
+            platform: recipient.platform,
+            type: "promo",
+            route,
+            title: personalizeText(title, user),
+            body: personalizeText(body, user),
+            status: "SENT",
+            sentAt: new Date(),
+          };
+        })
+        .filter(Boolean),
+      { ordered: false },
+    ).catch(() => {});
+  }
+
+  return {
+    successCount: successTokens.length,
+    failureCount: failureTokens.length,
+    successTokens,
+    failureTokens,
+    notificationId,
+    targetCount: uniqueDocs.length,
+  };
+}
+
 export async function sendPushToTokens({ tokens, title, body, data = {} }) {
   if (!tokens?.length) {
     return {
@@ -230,63 +322,28 @@ export async function sendPromoBroadcast({ title, body, route = "/home" }) {
   const docs = await DeviceToken.find({ promoEnabled: { $ne: false } })
     .select("token user platform")
     .lean();
-  const uniqueDocs = [];
-  const seen = new Set();
+  const uniqueDocs = dedupeTokenDocs(docs);
+  const userIds = [
+    ...new Set(
+      uniqueDocs
+        .map((doc) => doc.user?.toString?.())
+        .filter(Boolean),
+    ),
+  ];
 
-  for (const doc of docs) {
-    const token = doc.token?.trim();
-    if (!token || seen.has(token)) continue;
-    seen.add(token);
-    uniqueDocs.push(doc);
-  }
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } })
+        .select("_id name phone society tower floor flat")
+        .lean()
+    : [];
 
-  const notificationId = `promo_${Date.now()}_${Math.random()
-    .toString(36)
-    .slice(2, 10)}`;
-  const tokens = uniqueDocs.map((doc) => doc.token).filter(Boolean);
-
-  const result = await sendPushToTokens({
-    tokens,
+  return sendPersonalizedPromoNotifications({
+    docs: uniqueDocs,
+    users,
     title,
     body,
-    data: {
-      type: "promo",
-      notificationId,
-      route,
-    },
+    route,
   });
-
-  if (result.successTokens.length) {
-    const tokenToDoc = new Map(uniqueDocs.map((doc) => [doc.token, doc]));
-
-    await NotificationReceipt.insertMany(
-      result.successTokens
-        .map((token) => {
-        const recipient = tokenToDoc.get(token);
-        if (!recipient) return null;
-        return {
-          notificationId,
-          user: recipient.user,
-          token,
-          platform: recipient.platform,
-          type: "promo",
-          route,
-          title,
-          body,
-          status: "SENT",
-          sentAt: new Date(),
-        };
-      })
-        .filter(Boolean),
-      { ordered: false },
-    ).catch(() => {});
-  }
-
-  return {
-    ...result,
-    notificationId,
-    targetCount: tokens.length,
-  };
 }
 
 export async function sendTargetedPromoNotification({
@@ -323,79 +380,11 @@ export async function sendTargetedPromoNotification({
   })
     .select("token user platform")
     .lean();
-
-  const tokenToUser = new Map(users.map((user) => [user._id.toString(), user]));
-  const uniqueDocs = [];
-  const seen = new Set();
-
-  for (const doc of docs) {
-    const token = doc.token?.trim();
-    if (!token || seen.has(token)) continue;
-    seen.add(token);
-    uniqueDocs.push(doc);
-  }
-
-  const notificationId = `promo_${Date.now()}_${Math.random()
-    .toString(36)
-    .slice(2, 10)}`;
-  const successTokens = [];
-  const failureTokens = [];
-
-  for (const doc of uniqueDocs) {
-    const user = tokenToUser.get(doc.user?.toString?.() || "");
-    if (!user) continue;
-
-    const result = await sendPersonalizedPush({
-      token: doc.token,
-      user,
-      title,
-      body,
-      route,
-      notificationType: "promo",
-    });
-
-    if (result.success) {
-      successTokens.push(doc.token);
-    } else {
-      failureTokens.push(doc.token);
-    }
-  }
-
-  if (successTokens.length) {
-    const tokenToDoc = new Map(uniqueDocs.map((doc) => [doc.token, doc]));
-
-    await NotificationReceipt.insertMany(
-      successTokens
-        .map((token) => {
-          const recipient = tokenToDoc.get(token);
-          if (!recipient) return null;
-          const user = tokenToUser.get(recipient.user?.toString?.() || "");
-          if (!user) return null;
-
-          return {
-            notificationId,
-            user: recipient.user,
-            token,
-            platform: recipient.platform,
-            type: "promo",
-            route,
-            title: personalizeText(title, user),
-            body: personalizeText(body, user),
-            status: "SENT",
-            sentAt: new Date(),
-          };
-        })
-        .filter(Boolean),
-      { ordered: false },
-    ).catch(() => {});
-  }
-
-  return {
-    successCount: successTokens.length,
-    failureCount: failureTokens.length,
-    successTokens,
-    failureTokens,
-    notificationId,
-    targetCount: uniqueDocs.length,
-  };
+  return sendPersonalizedPromoNotifications({
+    docs,
+    users,
+    title,
+    body,
+    route,
+  });
 }

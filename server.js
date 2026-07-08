@@ -16,6 +16,7 @@ import RefreshToken from "./models/RefreshToken.js";
 import supportRoutes from "./routes/support.js";
 import adminInventoryRoutes from "./routes/adminInventoryRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
+import couponRoutes from "./routes/couponRoutes.js";
 const app = express();
 
 /* =======================
@@ -55,7 +56,7 @@ mongoose
    ROUTES
 ======================= */
 
-app.use("/api", authRouter, supportRoutes,itemsRouter,cartRoutes,orderRoutes,adminInventoryRoutes,notificationRoutes,);
+app.use("/api", authRouter, supportRoutes,itemsRouter,cartRoutes,orderRoutes,adminInventoryRoutes,notificationRoutes,couponRoutes,);
 app.get("/", (req, res) => {
   res.send("CleanCuts backend running");
 });

@@ -23,6 +23,9 @@ const orderSchema = new mongoose.Schema(
       enum: ["ONLINE", "COD"],
       default: "ONLINE",
     },
+    couponCode: { type: String },
+    couponId: { type: mongoose.Schema.Types.ObjectId, ref: "Coupon" },
+    couponDiscountAmount: { type: Number, default: 0 },
     silentDelivery: {
       type: Boolean,
       default: false,
