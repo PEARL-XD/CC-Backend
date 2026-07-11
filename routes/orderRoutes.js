@@ -6,7 +6,11 @@ import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
 import { sendPushToAdmins, sendPushToUser } from "../utils/pushNotifications.js";
-import { calculatePackPrice } from "../utils/packPricing.js";
+import { findItemsByIdsFlexible } from "../utils/itemLookup.js";
+import {
+  getPackPriceForItem,
+  isCookedCategory,
+} from "../utils/packPricing.js";
 import {
   validateCouponForUser,
   redeemCouponForOrder,
@@ -391,7 +395,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     }
 
     const productIds = cartItems.map((i) => i._id);
-    const products = await Item.find({ _id: { $in: productIds } }).lean();
+    const products = await findItemsByIdsFlexible(productIds);
 
     const settings = await StorefrontSettings.findOne({
       key: "storefront",
@@ -450,7 +454,11 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       const selectedSize = Number(item.selectedSize);
       const quantity = Number(item.quantity);
 
-      if (![250, 500, 750, 1000].includes(selectedSize)) {
+      const allowedSizes = isCookedCategory(product.category)
+        ? [250, 500, 1000]
+        : [250, 500, 750, 1000];
+
+      if (!allowedSizes.includes(selectedSize)) {
         return res.status(400).json({
           error: `Invalid size for ${product.name}`,
         });
@@ -462,12 +470,13 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
         });
       }
 
-      const unitPrice = calculatePackPrice(product.price, selectedSize);
+      const unitPrice = getPackPriceForItem(product, selectedSize);
 
       verifiedItems.push({
         _id: product._id,
         name: product.name,
         img: product.imgUrl,
+        category: product.category,
         price: unitPrice,
         selectedSize,
         quantity,

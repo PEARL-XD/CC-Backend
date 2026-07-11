@@ -4,7 +4,12 @@ import Cart from "../models/Cart.js";
 import Item from "../models/Item.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
 import {
-  calculatePackPrice,
+  findItemByIdFlexible,
+  findItemsByIdsFlexible,
+} from "../utils/itemLookup.js";
+import {
+  getPackPriceForItem,
+  isCookedCategory,
   normalizePackSize,
 } from "../utils/packPricing.js";
 
@@ -33,11 +38,7 @@ async function hydrateCartItems(items) {
     ...new Set(items.map((item) => item?._id?.toString?.()).filter(Boolean)),
   ];
 
-  const products = ids.length
-    ? await Item.find({ _id: { $in: ids } })
-        .select("_id name imgUrl price")
-        .lean()
-    : [];
+  const products = ids.length ? await findItemsByIdsFlexible(ids) : [];
 
   const productMap = new Map(
     products.map((product) => [product._id.toString(), product]),
@@ -63,14 +64,15 @@ async function hydrateCartItems(items) {
       _id: product._id,
       name: product.name,
       img: product.imgUrl,
+      category: product.category,
       selectedSize,
-      price: calculatePackPrice(product.price, selectedSize),
+      price: getPackPriceForItem(product, selectedSize),
     };
   });
 }
 
-function validateItemInput(res, { _id, selectedSize, quantity }) {
-  if (!_id || typeof selectedSize !== "number") {
+function validateItemInput(res, { _id, quantity }) {
+  if (!_id) {
     res.status(400).json({ error: "Invalid item" });
     return false;
   }
@@ -84,6 +86,10 @@ function validateItemInput(res, { _id, selectedSize, quantity }) {
     }
   }
   return true;
+}
+
+function getAllowedSizes(category) {
+  return isCookedCategory(category) ? [250, 500, 1000] : [250, 500, 750, 1000];
 }
 
 /* ---------------- READ ---------------- */
@@ -109,16 +115,16 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
     const normalizedSize = Number(selectedSize);
     const qty = Number(quantity);
 
-    if (!validateItemInput(res, { _id, selectedSize: normalizedSize, quantity })) {
+    if (!validateItemInput(res, { _id, quantity })) {
       return;
     }
 
-    if (![250, 500, 750, 1000].includes(normalizedSize)) {
+    const product = await findItemByIdFlexible(_id);
+    if (!product) return res.status(404).json({ error: "Product not found" });
+
+    if (!getAllowedSizes(product.category).includes(normalizedSize)) {
       return res.status(400).json({ error: "Invalid selected size" });
     }
-
-    const product = await Item.findById(_id).lean();
-    if (!product) return res.status(404).json({ error: "Product not found" });
 
     if (product.isOutOfStock === true) {
       return res.status(400).json({
@@ -159,6 +165,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
       cart.items[idx].quantity = newQty;
       cart.items[idx].name = product.name;
       cart.items[idx].img = product.imgUrl;
+      cart.items[idx].category = product.category;
     } else {
       if (cart.items.length >= CART_ITEM_LIMIT) {
         return res.status(400).json({ error: "Cart limit reached" });
@@ -170,6 +177,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
         quantity: qty,
         name: product.name,
         img: product.imgUrl,
+        category: product.category,
       });
     }
 
@@ -210,8 +218,16 @@ router.post("/cart/update", authenticateToken, async (req, res) => {
   try {
     const { _id, selectedSize, quantity } = req.body;
 
-    if (!validateItemInput(res, { _id, selectedSize: Number(selectedSize), quantity })) {
+    if (!validateItemInput(res, { _id, quantity })) {
       return;
+    }
+
+    const product = await findItemByIdFlexible(_id);
+    if (!product) return res.status(404).json({ error: "Product not found" });
+
+    const normalizedSize = Number(selectedSize);
+    if (!getAllowedSizes(product.category).includes(normalizedSize)) {
+      return res.status(400).json({ error: "Invalid selected size" });
     }
 
     const cart = await getCart(req.user.id);
@@ -223,6 +239,7 @@ router.post("/cart/update", authenticateToken, async (req, res) => {
     if (!item) return res.status(404).json({ error: "Item not found" });
 
     item.quantity = Number(quantity);
+    item.category = product.category;
     cart.items = await hydrateCartItems(cart.items);
     await cart.save();
     res.json({ cart: cart.items });

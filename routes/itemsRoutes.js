@@ -1,8 +1,8 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
-import mongoose from "mongoose";
 import Item from "../models/Item.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
+import { findItemByIdFlexible } from "../utils/itemLookup.js";
 
 const router = express.Router();
 
@@ -93,7 +93,7 @@ router.get("/items", async (req, res) => {
 
     const items = await Item.find()
       .select(
-        "_id name desc longdesc imgUrl price oldprice proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock"
+        "_id name desc longdesc imgUrl price oldprice cookedQuarterPrice cookedHalfPrice cookedFullPrice proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock"
       )
       .lean();
 
@@ -113,6 +113,9 @@ router.get("/items", async (req, res) => {
         img,
         price: it.price,
         oldprice: it.oldprice,
+        cookedQuarterPrice: it.cookedQuarterPrice,
+        cookedHalfPrice: it.cookedHalfPrice,
+        cookedFullPrice: it.cookedFullPrice,
         proteinPer100g: it.proteinPer100g,
         carbsPer100g: it.carbsPer100g,
         caloriesPer100g: it.caloriesPer100g,
@@ -230,18 +233,14 @@ router.get("/items/search", async (req, res) => {
 
 router.get("/items/:id", async (req, res) => {
   try {
-    const id = req.params.id;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    const id = String(req.params.id || "").trim();
+    if (!id) {
       return res.status(400).json({ error: "Invalid item id" });
     }
 
     const settings = await getStorefrontSettings();
 
-    const item = await Item.findById(id)
-      .select(
-        "_id name desc longdesc imgUrl price oldprice proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock"
-      )
-      .lean();
+    const item = await findItemByIdFlexible(id);
 
     if (!item) return res.status(404).json({ error: "Item not found" });
 
@@ -256,6 +255,9 @@ router.get("/items/:id", async (req, res) => {
       img: chooseImageUrl(item.imgUrl),
       price: item.price,
       oldprice: item.oldprice,
+      cookedQuarterPrice: item.cookedQuarterPrice,
+      cookedHalfPrice: item.cookedHalfPrice,
+      cookedFullPrice: item.cookedFullPrice,
       proteinPer100g: item.proteinPer100g,
       carbsPer100g: item.carbsPer100g,
       caloriesPer100g: item.caloriesPer100g,

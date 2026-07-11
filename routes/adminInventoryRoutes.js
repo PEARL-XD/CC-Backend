@@ -5,6 +5,7 @@ import StorefrontSettings from "../models/StorefrontSettings.js";
 import User from "../models/User.js";
 import { authenticateToken } from "./auth.js";
 import { clearItemsCache } from "./itemsRoutes.js";
+import { findItemByIdFlexible } from "../utils/itemLookup.js";
 
 const router = express.Router();
 
@@ -55,7 +56,7 @@ router.get("/admin/inventory", async (req, res) => {
 
     const items = await Item.find()
       .select(
-        "_id category name desc price oldprice imgUrl isOutOfStock createdAt updatedAt"
+        "_id category name desc price oldprice cookedQuarterPrice cookedHalfPrice cookedFullPrice imgUrl isOutOfStock createdAt updatedAt"
       )
       .sort({ category: 1, name: 1 })
       .lean();
@@ -254,20 +255,55 @@ router.patch("/admin/items/:id", async (req, res) => {
       }
     }
 
+    if ("cookedQuarterPrice" in req.body) {
+      if (req.body.cookedQuarterPrice === null || req.body.cookedQuarterPrice === "") {
+        updates.cookedQuarterPrice = undefined;
+      } else {
+        const cookedQuarterPrice = Number(req.body.cookedQuarterPrice);
+        if (!Number.isFinite(cookedQuarterPrice) || cookedQuarterPrice < 0) {
+          return res.status(400).json({ error: "Invalid cooked quarter price" });
+        }
+        updates.cookedQuarterPrice = cookedQuarterPrice;
+      }
+    }
+
+    if ("cookedHalfPrice" in req.body) {
+      if (req.body.cookedHalfPrice === null || req.body.cookedHalfPrice === "") {
+        updates.cookedHalfPrice = undefined;
+      } else {
+        const cookedHalfPrice = Number(req.body.cookedHalfPrice);
+        if (!Number.isFinite(cookedHalfPrice) || cookedHalfPrice < 0) {
+          return res.status(400).json({ error: "Invalid cooked half price" });
+        }
+        updates.cookedHalfPrice = cookedHalfPrice;
+      }
+    }
+
+    if ("cookedFullPrice" in req.body) {
+      if (req.body.cookedFullPrice === null || req.body.cookedFullPrice === "") {
+        updates.cookedFullPrice = undefined;
+      } else {
+        const cookedFullPrice = Number(req.body.cookedFullPrice);
+        if (!Number.isFinite(cookedFullPrice) || cookedFullPrice < 0) {
+          return res.status(400).json({ error: "Invalid cooked full price" });
+        }
+        updates.cookedFullPrice = cookedFullPrice;
+      }
+    }
+
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: "No valid fields to update" });
     }
 
-    const item = await Item.findByIdAndUpdate(
-      id,
+    const existing = await findItemByIdFlexible(id);
+    if (!existing) return res.status(404).json({ error: "Item not found" });
+
+    await Item.collection.updateOne(
+      { _id: existing._id },
       { $set: updates },
-      {
-        new: true,
-        runValidators: true,
-      }
-    )
-      .select("_id category name desc price oldprice imgUrl isOutOfStock")
-      .lean();
+    );
+
+    const item = await findItemByIdFlexible(existing._id);
 
     if (!item) return res.status(404).json({ error: "Item not found" });
 
