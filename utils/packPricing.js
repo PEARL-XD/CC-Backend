@@ -98,6 +98,48 @@ function readNumericField(item, aliases) {
   return null;
 }
 
+function getRawServingOptions(item) {
+  const candidates = [
+    item?.pricingOptions,
+    item?.servingOptions,
+    item?.rtcServingOptions,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function normalizeServingOption(option, fallbackSize = 0) {
+  if (!option || typeof option !== "object") {
+    return null;
+  }
+
+  const sizeCandidate =
+    option.size ?? option.grams ?? option.value ?? option.servingSize ?? fallbackSize;
+  const size = Number(sizeCandidate);
+  const label = String(option.label ?? option.name ?? "").trim();
+  const rangeLabel = String(option.rangeLabel ?? option.range ?? option.description ?? "").trim();
+  const price = Number(option.price);
+
+  return {
+    size: Number.isFinite(size) ? size : fallbackSize,
+    label: label || `${Number.isFinite(size) ? size : fallbackSize}g`,
+    rangeLabel: rangeLabel || "Ready to cook",
+    price: Number.isFinite(price) ? roundToTwo(price) : null,
+  };
+}
+
+function getNormalizedServingOptions(item) {
+  return getRawServingOptions(item)
+    .map((option, index) => normalizeServingOption(option, index + 1))
+    .filter(Boolean);
+}
+
 export function normalizePackSize(size) {
   const parsed = Number(size);
   return [...UNCOOKED_PACK_SIZES, ...COOKED_PACK_SIZES, ...RTC_PACK_SIZES, 0].includes(parsed)
@@ -132,6 +174,10 @@ export function isSingleCategory(category) {
 export function normalizePricingMode(item = {}) {
   const explicit = String(item?.pricingMode || "").trim().toLowerCase();
   if (explicit) return explicit;
+
+  if (getNormalizedServingOptions(item).length) {
+    return "rtc";
+  }
 
   const category = item?.category;
   if (
@@ -175,11 +221,15 @@ export function normalizePricingMode(item = {}) {
 }
 
 export function getAllowedSizesForItem(item = {}) {
+  const explicitOptions = getNormalizedServingOptions(item);
+
   switch (normalizePricingMode(item)) {
     case "cooked":
       return COOKED_PACK_SIZES;
     case "rtc":
-      return RTC_PACK_SIZES;
+      return explicitOptions.length
+        ? explicitOptions.map((option) => option.size).filter(Boolean)
+        : RTC_PACK_SIZES;
     case "single":
       return [0];
     case "uncooked":
@@ -196,6 +246,19 @@ export function getPackOptions(category, item = null) {
   }
 
   if (mode === "rtc") {
+    const explicitOptions = getNormalizedServingOptions(item || {});
+    if (explicitOptions.length) {
+      return explicitOptions.map((option) => ({
+        size: option.size,
+        label: option.label,
+        range: option.rangeLabel,
+        price:
+          option.price != null
+            ? option.price
+            : calculateRtcPackPrice(item || { category }, option.size),
+      }));
+    }
+
     return RTC_PACK_SIZES.map((size) => ({
       size,
       ...RTC_PACK_META[size],
@@ -270,6 +333,14 @@ export function calculateRtcPackPrice(item, selectedSize) {
     return fallback;
   }
 
+  const explicitOptions = getNormalizedServingOptions(item);
+  if (explicitOptions.length) {
+    const found = explicitOptions.find((option) => option.size === size);
+    if (found?.price != null) {
+      return found.price;
+    }
+  }
+
   const aliasesBySize = {
     200: [
       "rtc200Price",
@@ -299,8 +370,8 @@ export function calculateRtcPackPrice(item, selectedSize) {
   return fallback;
 }
 
-function getMetaByCategory(category, selectedSize) {
-  const mode = normalizePricingMode({ category });
+function getMetaByCategory(category, selectedSize, item = {}) {
+  const mode = normalizePricingMode({ category, ...(item || {}) });
   const size = normalizePackSize(selectedSize);
 
   if (!size) {
@@ -325,6 +396,17 @@ function getMetaByCategory(category, selectedSize) {
   }
 
   if (mode === "rtc") {
+    const explicitOptions = getNormalizedServingOptions(item);
+    if (explicitOptions.length) {
+      const found = explicitOptions.find((option) => option.size === size);
+      if (found) {
+        return {
+          label: found.label,
+          range: found.rangeLabel,
+        };
+      }
+    }
+
     return RTC_PACK_META[size] || {
       label: `${size} g`,
       range: "Ready to cook",
@@ -344,28 +426,28 @@ function getMetaByCategory(category, selectedSize) {
   };
 }
 
-export function getPackLabel(selectedSize, category = "") {
-  return getMetaByCategory(category, selectedSize).label;
+export function getPackLabel(selectedSize, category = "", item = {}) {
+  return getMetaByCategory(category, selectedSize, item).label;
 }
 
-export function getPackRange(selectedSize, category = "") {
-  return getMetaByCategory(category, selectedSize).range;
+export function getPackRange(selectedSize, category = "", item = {}) {
+  return getMetaByCategory(category, selectedSize, item).range;
 }
 
-export function getPackMeta(selectedSize, basePrice, category = "") {
+export function getPackMeta(selectedSize, basePrice, category = "", item = {}) {
   const size = normalizePackSize(selectedSize);
   const resolvedSize = size ?? Number(selectedSize ?? 0);
-  const mode = normalizePricingMode({ category });
+  const mode = normalizePricingMode({ category, ...(item || {}) });
 
   return {
     size: resolvedSize,
-    label: getPackLabel(resolvedSize, category),
-    range: getPackRange(resolvedSize, category),
+    label: getPackLabel(resolvedSize, category, item),
+    range: getPackRange(resolvedSize, category, item),
     price:
       mode === "cooked"
         ? calculateCookedPackPrice({ price: basePrice }, resolvedSize)
         : mode === "rtc"
-          ? calculateRtcPackPrice({ price: basePrice }, resolvedSize)
+          ? calculateRtcPackPrice({ ...item, price: basePrice }, resolvedSize)
           : mode === "single"
             ? roundToTwo(Number(basePrice) || 0)
             : calculatePackPrice(basePrice, resolvedSize),
@@ -373,11 +455,13 @@ export function getPackMeta(selectedSize, basePrice, category = "") {
 }
 
 export function getDefaultSelectedSizeForItem(item = {}) {
+  const explicitOptions = getNormalizedServingOptions(item);
+
   switch (normalizePricingMode(item)) {
     case "cooked":
       return 250;
     case "rtc":
-      return 200;
+      return explicitOptions[0]?.size ?? 200;
     case "single":
       return 0;
     case "uncooked":
@@ -394,6 +478,11 @@ export function getDefaultDisplayPriceForItem(item = {}) {
   }
 
   if (mode === "rtc") {
+    const explicitOptions = getNormalizedServingOptions(item);
+    if (explicitOptions.length) {
+      return explicitOptions[0].price ?? calculateRtcPackPrice(item, explicitOptions[0].size);
+    }
+
     return calculateRtcPackPrice(item, getDefaultSelectedSizeForItem(item));
   }
 
@@ -457,7 +546,7 @@ export function packDisplayText(selectedSize, { category = "", mode = "" } = {})
     return label || range || `${selectedSize}`;
   }
 
-  return `${label} • ${range}`;
+  return `${label} - ${range}`;
 }
 
 export function weightRangeForSize(grams, { category } = {}) {
@@ -469,3 +558,4 @@ export {
   COOKED_PACK_SIZES,
   RTC_PACK_SIZES,
 };
+

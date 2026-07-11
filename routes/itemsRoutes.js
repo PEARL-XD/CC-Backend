@@ -118,7 +118,7 @@ router.get("/items", async (req, res) => {
 
     const items = await Item.find()
       .select(
-        "_id name desc longdesc imgUrl price oldprice cookedQuarterPrice cookedHalfPrice cookedFullPrice rtc200Price rtc400Price proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock 200price 400Price 200gPrice 400gPrice servingSize"
+        "_id name desc longdesc imgUrl price oldprice pricingOptions cookedQuarterPrice cookedHalfPrice cookedFullPrice rtc200Price rtc400Price proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl 200price 400Price 200gPrice 400gPrice servingSize"
       )
       .lean();
 
@@ -147,9 +147,16 @@ router.get("/items", async (req, res) => {
         pricingMode: pricing.pricingMode,
         defaultSelectedSize: pricing.defaultSelectedSize,
         showSizeSelector: pricing.showSizeSelector,
+        pricingOptions: pricing.pricingOptions,
         proteinPer100g: it.proteinPer100g,
         carbsPer100g: it.carbsPer100g,
         caloriesPer100g: it.caloriesPer100g,
+        isExternalItem: Boolean(it.isExternalItem),
+        showSourceNotice: Boolean(it.showSourceNotice),
+        sourceNoticeTitle: it.sourceNoticeTitle,
+        sourceNoticeMessage: it.sourceNoticeMessage,
+        sourceLabel: it.sourceLabel,
+        sourceUrl: it.sourceUrl,
         isOutOfStock: Boolean(it.isOutOfStock),
         isCategoryDisabled: sectionDisabled,
         isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
@@ -219,7 +226,7 @@ router.get("/items/search", async (req, res) => {
       )
         .sort({ score: { $meta: "textScore" } })
         .limit(SEARCH_LIMIT)
-        .select("_id name price imgUrl desc category isOutOfStock rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice")
+        .select("_id name price imgUrl desc category isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice pricingOptions")
         .lean();
     } catch (_) {
       results = [];
@@ -233,7 +240,7 @@ router.get("/items/search", async (req, res) => {
         null,
         { limit: SEARCH_LIMIT }
       )
-        .select("_id name price imgUrl desc category isOutOfStock rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice")
+        .select("_id name price imgUrl desc category isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice pricingOptions")
         .lean();
     }
 
@@ -249,6 +256,13 @@ router.get("/items/search", async (req, res) => {
         img: chooseImageUrl(it.imgUrl),
         desc: it.desc || "",
         pricingMode: pricing.pricingMode,
+        pricingOptions: pricing.pricingOptions,
+        isExternalItem: Boolean(it.isExternalItem),
+        showSourceNotice: Boolean(it.showSourceNotice),
+        sourceNoticeTitle: it.sourceNoticeTitle,
+        sourceNoticeMessage: it.sourceNoticeMessage,
+        sourceLabel: it.sourceLabel,
+        sourceUrl: it.sourceUrl,
         isOutOfStock: Boolean(it.isOutOfStock),
         isCategoryDisabled: sectionDisabled,
         isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
@@ -304,6 +318,12 @@ router.get("/items/:id", async (req, res) => {
       caloriesPer100g: item.caloriesPer100g,
       category: item.category,
       servingSize: item.servingSize,
+      isExternalItem: Boolean(item.isExternalItem),
+      showSourceNotice: Boolean(item.showSourceNotice),
+      sourceNoticeTitle: item.sourceNoticeTitle,
+      sourceNoticeMessage: item.sourceNoticeMessage,
+      sourceLabel: item.sourceLabel,
+      sourceUrl: item.sourceUrl,
       isOutOfStock: Boolean(item.isOutOfStock),
       isCategoryDisabled: sectionDisabled,
       isUnavailable: Boolean(item.isOutOfStock) || sectionDisabled,
