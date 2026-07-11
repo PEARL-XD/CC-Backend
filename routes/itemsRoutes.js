@@ -3,6 +3,12 @@ import rateLimit from "express-rate-limit";
 import Item from "../models/Item.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
 import { findItemByIdFlexible } from "../utils/itemLookup.js";
+import {
+  getDefaultDisplayPriceForItem,
+  getDefaultSelectedSizeForItem,
+  getPackOptions,
+  normalizePricingMode,
+} from "../utils/packPricing.js";
 
 const router = express.Router();
 
@@ -62,6 +68,25 @@ function chooseImageUrl(itemImg) {
   return PUBLIC_PLACEHOLDER || UPLOADED_SCREENSHOT;
 }
 
+function buildPricingPayload(item) {
+  const pricingMode = normalizePricingMode(item);
+  const defaultSelectedSize = getDefaultSelectedSizeForItem(item);
+  const pricingOptions = getPackOptions(item?.category, item).map((option) => ({
+    size: option.size,
+    label: option.label,
+    rangeLabel: option.range,
+    price: option.price,
+  }));
+
+  return {
+    pricingMode,
+    defaultSelectedSize,
+    showSizeSelector: pricingMode !== "single",
+    pricingOptions,
+    displayPrice: getDefaultDisplayPriceForItem(item),
+  };
+}
+
 async function getStorefrontSettings() {
   const settings = await StorefrontSettings.findOne({ key: "storefront" }).lean();
   return {
@@ -93,7 +118,7 @@ router.get("/items", async (req, res) => {
 
     const items = await Item.find()
       .select(
-        "_id name desc longdesc imgUrl price oldprice cookedQuarterPrice cookedHalfPrice cookedFullPrice proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock"
+        "_id name desc longdesc imgUrl price oldprice cookedQuarterPrice cookedHalfPrice cookedFullPrice rtc200Price rtc400Price proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock 200price 400Price 200gPrice 400gPrice servingSize"
       )
       .lean();
 
@@ -103,6 +128,7 @@ router.get("/items", async (req, res) => {
       const img = chooseImageUrl(it.imgUrl);
       const category = it.category || "Uncategorized";
       const sectionDisabled = isCookedCategory(category) && !settings.cookedEnabled;
+      const pricing = buildPricingPayload(it);
 
       if (!categoryMap.has(category)) categoryMap.set(category, []);
       categoryMap.get(category).push({
@@ -111,11 +137,14 @@ router.get("/items", async (req, res) => {
         desc: it.desc,
         longdesc: it.longdesc,
         img,
-        price: it.price,
+        price: it.price ?? pricing.displayPrice,
         oldprice: it.oldprice,
         cookedQuarterPrice: it.cookedQuarterPrice,
         cookedHalfPrice: it.cookedHalfPrice,
         cookedFullPrice: it.cookedFullPrice,
+        pricingMode: pricing.pricingMode,
+        defaultSelectedSize: pricing.defaultSelectedSize,
+        showSizeSelector: pricing.showSizeSelector,
         proteinPer100g: it.proteinPer100g,
         carbsPer100g: it.carbsPer100g,
         caloriesPer100g: it.caloriesPer100g,
@@ -188,7 +217,7 @@ router.get("/items/search", async (req, res) => {
       )
         .sort({ score: { $meta: "textScore" } })
         .limit(SEARCH_LIMIT)
-        .select("_id name price imgUrl desc category isOutOfStock")
+        .select("_id name price imgUrl desc category isOutOfStock rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice")
         .lean();
     } catch (_) {
       results = [];
@@ -202,20 +231,22 @@ router.get("/items/search", async (req, res) => {
         null,
         { limit: SEARCH_LIMIT }
       )
-        .select("_id name price imgUrl desc category isOutOfStock")
+        .select("_id name price imgUrl desc category isOutOfStock rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice")
         .lean();
     }
 
     const normalized = results.map((it) => {
       const sectionDisabled =
         isCookedCategory(it.category) && !settings.cookedEnabled;
+      const pricing = buildPricingPayload(it);
 
       return {
         _id: it._id,
         name: it.name,
-        price: it.price,
+        price: it.price ?? pricing.displayPrice,
         img: chooseImageUrl(it.imgUrl),
         desc: it.desc || "",
+        pricingMode: pricing.pricingMode,
         isOutOfStock: Boolean(it.isOutOfStock),
         isCategoryDisabled: sectionDisabled,
         isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
@@ -246,6 +277,7 @@ router.get("/items/:id", async (req, res) => {
 
     const sectionDisabled =
       isCookedCategory(item.category) && !settings.cookedEnabled;
+    const pricing = buildPricingPayload(item);
 
     return res.json({
       _id: item._id,
@@ -253,15 +285,21 @@ router.get("/items/:id", async (req, res) => {
       desc: item.desc,
       longdesc: item.longdesc,
       img: chooseImageUrl(item.imgUrl),
-      price: item.price,
+      price: item.price ?? pricing.displayPrice,
       oldprice: item.oldprice,
       cookedQuarterPrice: item.cookedQuarterPrice,
       cookedHalfPrice: item.cookedHalfPrice,
       cookedFullPrice: item.cookedFullPrice,
+      pricingMode: pricing.pricingMode,
+      defaultSelectedSize: pricing.defaultSelectedSize,
+      showSizeSelector: pricing.showSizeSelector,
+      pricingOptions: pricing.pricingOptions,
+      displayPrice: pricing.displayPrice,
       proteinPer100g: item.proteinPer100g,
       carbsPer100g: item.carbsPer100g,
       caloriesPer100g: item.caloriesPer100g,
       category: item.category,
+      servingSize: item.servingSize,
       isOutOfStock: Boolean(item.isOutOfStock),
       isCategoryDisabled: sectionDisabled,
       isUnavailable: Boolean(item.isOutOfStock) || sectionDisabled,

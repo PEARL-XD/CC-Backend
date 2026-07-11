@@ -8,9 +8,10 @@ import {
   findItemsByIdsFlexible,
 } from "../utils/itemLookup.js";
 import {
+  getAllowedSizesForItem,
   getPackPriceForItem,
-  isCookedCategory,
   normalizePackSize,
+  normalizePricingMode,
 } from "../utils/packPricing.js";
 
 const router = express.Router();
@@ -88,10 +89,6 @@ function validateItemInput(res, { _id, quantity }) {
   return true;
 }
 
-function getAllowedSizes(category) {
-  return isCookedCategory(category) ? [250, 500, 1000] : [250, 500, 750, 1000];
-}
-
 /* ---------------- READ ---------------- */
 
 router.get("/cart", authenticateToken, async (req, res) => {
@@ -122,7 +119,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
     const product = await findItemByIdFlexible(_id);
     if (!product) return res.status(404).json({ error: "Product not found" });
 
-    if (!getAllowedSizes(product.category).includes(normalizedSize)) {
+    if (!getAllowedSizesForItem(product).includes(normalizedSize)) {
       return res.status(400).json({ error: "Invalid selected size" });
     }
 
@@ -137,8 +134,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
     }).lean();
 
     const cookedEnabled = settings?.cookedEnabled ?? true;
-    const isCooked =
-      String(product.category || "").trim().toLowerCase() === "cooked";
+    const isCooked = normalizePricingMode(product) === "cooked";
 
     if (isCooked && !cookedEnabled) {
       return res.status(400).json({
@@ -226,7 +222,7 @@ router.post("/cart/update", authenticateToken, async (req, res) => {
     if (!product) return res.status(404).json({ error: "Product not found" });
 
     const normalizedSize = Number(selectedSize);
-    if (!getAllowedSizes(product.category).includes(normalizedSize)) {
+    if (!getAllowedSizesForItem(product).includes(normalizedSize)) {
       return res.status(400).json({ error: "Invalid selected size" });
     }
 

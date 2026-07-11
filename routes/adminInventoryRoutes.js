@@ -1,5 +1,4 @@
 import express from "express";
-import mongoose from "mongoose";
 import Item from "../models/Item.js";
 import StorefrontSettings from "../models/StorefrontSettings.js";
 import User from "../models/User.js";
@@ -56,7 +55,7 @@ router.get("/admin/inventory", async (req, res) => {
 
     const items = await Item.find()
       .select(
-        "_id category name desc price oldprice cookedQuarterPrice cookedHalfPrice cookedFullPrice imgUrl isOutOfStock createdAt updatedAt"
+        "_id category name desc price oldprice cookedQuarterPrice cookedHalfPrice cookedFullPrice rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice imgUrl isOutOfStock createdAt updatedAt"
       )
       .sort({ category: 1, name: 1 })
       .lean();
@@ -218,9 +217,8 @@ router.patch("/admin/storefront", async (req, res) => {
 
 router.patch("/admin/items/:id", async (req, res) => {
   try {
-    const id = req.params.id;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    const id = String(req.params.id || "").trim();
+    if (!id) {
       return res.status(400).json({ error: "Invalid item id" });
     }
 
@@ -288,6 +286,30 @@ router.patch("/admin/items/:id", async (req, res) => {
           return res.status(400).json({ error: "Invalid cooked full price" });
         }
         updates.cookedFullPrice = cookedFullPrice;
+      }
+    }
+
+    if ("rtc200Price" in req.body) {
+      if (req.body.rtc200Price === null || req.body.rtc200Price === "") {
+        updates.rtc200Price = undefined;
+      } else {
+        const rtc200Price = Number(req.body.rtc200Price);
+        if (!Number.isFinite(rtc200Price) || rtc200Price < 0) {
+          return res.status(400).json({ error: "Invalid RTC 200g price" });
+        }
+        updates.rtc200Price = rtc200Price;
+      }
+    }
+
+    if ("rtc400Price" in req.body) {
+      if (req.body.rtc400Price === null || req.body.rtc400Price === "") {
+        updates.rtc400Price = undefined;
+      } else {
+        const rtc400Price = Number(req.body.rtc400Price);
+        if (!Number.isFinite(rtc400Price) || rtc400Price < 0) {
+          return res.status(400).json({ error: "Invalid RTC 400g price" });
+        }
+        updates.rtc400Price = rtc400Price;
       }
     }
 

@@ -10,6 +10,8 @@ const itemSchema = new mongoose.Schema({
   cookedQuarterPrice: { type: Number },
   cookedHalfPrice: { type: Number },
   cookedFullPrice: { type: Number },
+  rtc200Price: { type: Number },
+  rtc400Price: { type: Number },
   imgUrl: { type: String },
   proteinPer100g: { type: String },
   carbsPer100g: { type: String },

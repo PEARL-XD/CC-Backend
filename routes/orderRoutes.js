@@ -9,7 +9,8 @@ import { sendPushToAdmins, sendPushToUser } from "../utils/pushNotifications.js"
 import { findItemsByIdsFlexible } from "../utils/itemLookup.js";
 import {
   getPackPriceForItem,
-  isCookedCategory,
+  getAllowedSizesForItem,
+  normalizePricingMode,
 } from "../utils/packPricing.js";
 import {
   validateCouponForUser,
@@ -442,8 +443,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
         });
       }
 
-      const isCooked =
-        String(product.category || "").trim().toLowerCase() === "cooked";
+      const isCooked = normalizePricingMode(product) === "cooked";
 
       if (isCooked && !cookedEnabled) {
         return res.status(400).json({
@@ -454,9 +454,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       const selectedSize = Number(item.selectedSize);
       const quantity = Number(item.quantity);
 
-      const allowedSizes = isCookedCategory(product.category)
-        ? [250, 500, 1000]
-        : [250, 500, 750, 1000];
+      const allowedSizes = getAllowedSizesForItem(product);
 
       if (!allowedSizes.includes(selectedSize)) {
         return res.status(400).json({
