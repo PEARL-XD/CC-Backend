@@ -119,7 +119,11 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
     const product = await findItemByIdFlexible(_id);
     if (!product) return res.status(404).json({ error: "Product not found" });
 
-    if (!getAllowedSizesForItem(product).includes(normalizedSize)) {
+    const mode = normalizePricingMode(product);
+    const resolvedSize = mode === "single" ? 0 : normalizedSize;
+    const allowedSizes = getAllowedSizesForItem(product);
+
+    if (mode !== "single" && !allowedSizes.includes(resolvedSize)) {
       return res.status(400).json({ error: "Invalid selected size" });
     }
 
@@ -134,7 +138,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
     }).lean();
 
     const cookedEnabled = settings?.cookedEnabled ?? true;
-    const isCooked = normalizePricingMode(product) === "cooked";
+    const isCooked = mode === "cooked";
 
     if (isCooked && !cookedEnabled) {
       return res.status(400).json({
@@ -146,7 +150,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
     const cart = await getCart(userId);
 
     const idx = cart.items.findIndex(
-      (i) => i._id.toString() === _id && i.selectedSize === normalizedSize,
+      (i) => i._id.toString() === _id && i.selectedSize === resolvedSize,
     );
 
     if (idx !== -1) {
@@ -169,7 +173,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
 
       cart.items.push({
         _id,
-        selectedSize: normalizedSize,
+        selectedSize: resolvedSize,
         quantity: qty,
         name: product.name,
         img: product.imgUrl,
@@ -222,14 +226,16 @@ router.post("/cart/update", authenticateToken, async (req, res) => {
     if (!product) return res.status(404).json({ error: "Product not found" });
 
     const normalizedSize = Number(selectedSize);
-    if (!getAllowedSizesForItem(product).includes(normalizedSize)) {
+    const mode = normalizePricingMode(product);
+    const resolvedSize = mode === "single" ? 0 : normalizedSize;
+    if (mode !== "single" && !getAllowedSizesForItem(product).includes(resolvedSize)) {
       return res.status(400).json({ error: "Invalid selected size" });
     }
 
     const cart = await getCart(req.user.id);
 
     const item = cart.items.find(
-      (i) => i._id.toString() === _id && i.selectedSize === Number(selectedSize),
+      (i) => i._id.toString() === _id && i.selectedSize === resolvedSize,
     );
 
     if (!item) return res.status(404).json({ error: "Item not found" });
