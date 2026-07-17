@@ -9,6 +9,10 @@ import { findItemByIdFlexible } from "../utils/itemLookup.js";
 const router = express.Router();
 
 const STOREFRONT_KEY = "storefront";
+const DEFAULT_RTC_SECTION_IMAGE =
+  "https://storage.googleapis.com/cccooked/banners/ready%20to%20cook.png";
+const DEFAULT_DESSERT_SECTION_IMAGE =
+  "https://storage.googleapis.com/cccooked/banners/desert.png";
 
 const isAdmin = async (req) => {
   const user = await User.findById(req.user.id).select("role").lean();
@@ -37,6 +41,8 @@ async function getOrCreateStorefrontSettings() {
         storeOpen: true,
         packagingFee: 0,
         platformFee: 0,
+        rtcSectionImage: DEFAULT_RTC_SECTION_IMAGE,
+        dessertSectionImage: DEFAULT_DESSERT_SECTION_IMAGE,
         bannerEnabled: false,
         bannerTitle: "",
         bannerMessage: "",
@@ -66,6 +72,11 @@ router.get("/admin/inventory", async (req, res) => {
         storeOpen: settings?.storeOpen ?? true,
         packagingFee: settings?.packagingFee ?? 0,
         platformFee: settings?.platformFee ?? 0,
+        rtcSectionImage:
+          settings?.rtcSectionImage?.trim() || DEFAULT_RTC_SECTION_IMAGE,
+        dessertSectionImage:
+          settings?.dessertSectionImage?.trim() ||
+          DEFAULT_DESSERT_SECTION_IMAGE,
         bannerEnabled: settings?.bannerEnabled ?? false,
         bannerTitle: settings?.bannerTitle ?? "",
         bannerMessage: settings?.bannerMessage ?? "",
@@ -85,6 +96,8 @@ router.patch("/admin/storefront", async (req, res) => {
     const storeOpen = req.body.storeOpen;
     const packagingFee = req.body.packagingFee;
     const platformFee = req.body.platformFee;
+    const rtcSectionImage = req.body.rtcSectionImage;
+    const dessertSectionImage = req.body.dessertSectionImage;
     const bannerEnabled = req.body.bannerEnabled;
     const bannerTitle = req.body.bannerTitle;
     const bannerMessage = req.body.bannerMessage;
@@ -127,6 +140,24 @@ router.patch("/admin/storefront", async (req, res) => {
         });
       }
       updates.platformFee = parsedFee;
+    }
+
+    if ("rtcSectionImage" in req.body) {
+      if (typeof rtcSectionImage !== "string") {
+        return res.status(400).json({
+          error: "rtcSectionImage must be a string",
+        });
+      }
+      updates.rtcSectionImage = rtcSectionImage.trim();
+    }
+
+    if ("dessertSectionImage" in req.body) {
+      if (typeof dessertSectionImage !== "string") {
+        return res.status(400).json({
+          error: "dessertSectionImage must be a string",
+        });
+      }
+      updates.dessertSectionImage = dessertSectionImage.trim();
     }
 
     if ("bannerEnabled" in req.body) {
@@ -178,6 +209,8 @@ router.patch("/admin/storefront", async (req, res) => {
       !("storeOpen" in req.body) &&
       !("packagingFee" in req.body) &&
       !("platformFee" in req.body) &&
+      !("rtcSectionImage" in req.body) &&
+      !("dessertSectionImage" in req.body) &&
       !("bannerEnabled" in req.body) &&
       !("bannerTitle" in req.body) &&
       !("bannerMessage" in req.body) &&
@@ -203,6 +236,11 @@ router.patch("/admin/storefront", async (req, res) => {
         storeOpen: settings.storeOpen,
         packagingFee: settings.packagingFee ?? 0,
         platformFee: settings.platformFee ?? 0,
+        rtcSectionImage:
+          settings.rtcSectionImage?.trim() || DEFAULT_RTC_SECTION_IMAGE,
+        dessertSectionImage:
+          settings.dessertSectionImage?.trim() ||
+          DEFAULT_DESSERT_SECTION_IMAGE,
         bannerEnabled: settings.bannerEnabled ?? false,
         bannerTitle: settings.bannerTitle ?? "",
         bannerMessage: settings.bannerMessage ?? "",

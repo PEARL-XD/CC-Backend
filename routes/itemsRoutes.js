@@ -20,6 +20,10 @@ const CACHE_TTL_MS = 60 * 1000;
 
 const PUBLIC_PLACEHOLDER = "/images/placeholder.png";
 const UPLOADED_SCREENSHOT = "/mnt/data/c53e2ca1-42d6-45e6-9cda-47676f31311e.png";
+const DEFAULT_RTC_SECTION_IMAGE =
+  "https://storage.googleapis.com/cccooked/banners/ready%20to%20cook.png";
+const DEFAULT_DESSERT_SECTION_IMAGE =
+  "https://storage.googleapis.com/cccooked/banners/desert.png";
 
 const itemsLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -68,6 +72,52 @@ function chooseImageUrl(itemImg) {
   return PUBLIC_PLACEHOLDER || UPLOADED_SCREENSHOT;
 }
 
+function firstArticleImage(articles) {
+  if (!Array.isArray(articles)) return "";
+
+  for (const article of articles) {
+    if (!article || typeof article !== "object") continue;
+    const img = chooseImageUrl(article.img ?? article.image ?? "");
+    if (img && img !== PUBLIC_PLACEHOLDER) {
+      return img;
+    }
+  }
+
+  return "";
+}
+
+function sectionImageFor(category, articles, settings = {}) {
+  const normalized = String(category || "").trim().toLowerCase();
+
+  if (normalized === "uncooked") {
+    return firstArticleImage(articles);
+  }
+
+  if (normalized === "cooked") {
+    return firstArticleImage(articles);
+  }
+
+  if (normalized.includes("ready to cook") || normalized.includes("rtc")) {
+    return (
+      settings.rtcSectionImage?.trim() ||
+      DEFAULT_RTC_SECTION_IMAGE ||
+      firstArticleImage(articles) ||
+      ""
+    );
+  }
+
+  if (normalized.includes("dessert")) {
+    return (
+      settings.dessertSectionImage?.trim() ||
+      DEFAULT_DESSERT_SECTION_IMAGE ||
+      firstArticleImage(articles) ||
+      ""
+    );
+  }
+
+  return firstArticleImage(articles) || "";
+}
+
 function buildPricingPayload(item) {
   const pricingMode = normalizePricingMode(item);
   const defaultSelectedSize = getDefaultSelectedSizeForItem(item);
@@ -94,6 +144,10 @@ async function getStorefrontSettings() {
     storeOpen: settings?.storeOpen ?? true,
     packagingFee: settings?.packagingFee ?? 0,
     platformFee: settings?.platformFee ?? 0,
+    rtcSectionImage:
+      settings?.rtcSectionImage?.trim() || DEFAULT_RTC_SECTION_IMAGE,
+    dessertSectionImage:
+      settings?.dessertSectionImage?.trim() || DEFAULT_DESSERT_SECTION_IMAGE,
     bannerEnabled: settings?.bannerEnabled ?? false,
     bannerTitle: settings?.bannerTitle ?? "",
     bannerMessage: settings?.bannerMessage ?? "",
@@ -169,7 +223,7 @@ router.get("/items", async (req, res) => {
 
       sections.push({
         title: category,
-        image: category === "Uncooked" ? "/images/raw.png" : "/images/cooked.png",
+        image: sectionImageFor(category, articles, settings),
         isDisabled: sectionDisabled,
         disabledReason: sectionDisabled
           ? "Cooked section is not available right now."
