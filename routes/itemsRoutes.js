@@ -97,11 +97,11 @@ function sectionImageFor(category, articles, settings = {}) {
   const normalized = normalizedCategoryKey(category);
 
   if (normalized === "uncooked") {
-    return "/images/raw.png";
+    return firstArticleImage(articles);
   }
 
   if (normalized === "cooked") {
-    return "/images/cooked.png";
+    return firstArticleImage(articles);
   }
 
   if (normalized.includes("readytocook") || normalized.includes("rtc")) {
@@ -123,6 +123,20 @@ function sectionImageFor(category, articles, settings = {}) {
   }
 
   return firstArticleImage(articles) || "";
+}
+
+function sectionImageAssetFor(category) {
+  const normalized = normalizedCategoryKey(category);
+
+  if (normalized === "uncooked") {
+    return "assets/images/raw.png";
+  }
+
+  if (normalized === "cooked") {
+    return "assets/images/cooked.png";
+  }
+
+  return "";
 }
 
 function buildPricingPayload(item) {
@@ -228,12 +242,13 @@ router.get("/items", async (req, res) => {
     for (const [category, articles] of categoryMap.entries()) {
       const sectionDisabled = isCookedCategory(category) && !settings.cookedEnabled;
 
-      sections.push({
-        title: category,
-        image: sectionImageFor(category, articles, settings),
-        isDisabled: sectionDisabled,
-        disabledReason: sectionDisabled
-          ? "Cooked section is not available right now."
+    sections.push({
+      title: category,
+      image: sectionImageFor(category, articles, settings),
+      imageAsset: sectionImageAssetFor(category),
+      isDisabled: sectionDisabled,
+      disabledReason: sectionDisabled
+        ? "Cooked section is not available right now."
           : "",
         articles,
       });
