@@ -97,11 +97,11 @@ function sectionImageFor(category, articles, settings = {}) {
   const normalized = normalizedCategoryKey(category);
 
   if (normalized === "uncooked") {
-    return firstArticleImage(articles);
+    return "/images/raw.png";
   }
 
   if (normalized === "cooked") {
-    return firstArticleImage(articles);
+    return "/images/cooked.png";
   }
 
   if (normalized.includes("readytocook") || normalized.includes("rtc")) {
