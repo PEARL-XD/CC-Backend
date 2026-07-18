@@ -72,6 +72,13 @@ function chooseImageUrl(itemImg) {
   return PUBLIC_PLACEHOLDER || UPLOADED_SCREENSHOT;
 }
 
+function normalizedCategoryKey(category) {
+  return String(category || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]/g, "");
+}
+
 function firstArticleImage(articles) {
   if (!Array.isArray(articles)) return "";
 
@@ -87,7 +94,7 @@ function firstArticleImage(articles) {
 }
 
 function sectionImageFor(category, articles, settings = {}) {
-  const normalized = String(category || "").trim().toLowerCase();
+  const normalized = normalizedCategoryKey(category);
 
   if (normalized === "uncooked") {
     return firstArticleImage(articles);
@@ -97,7 +104,7 @@ function sectionImageFor(category, articles, settings = {}) {
     return firstArticleImage(articles);
   }
 
-  if (normalized.includes("ready to cook") || normalized.includes("rtc")) {
+  if (normalized.includes("readytocook") || normalized.includes("rtc")) {
     return (
       settings.rtcSectionImage?.trim() ||
       DEFAULT_RTC_SECTION_IMAGE ||
