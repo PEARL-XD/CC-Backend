@@ -20,6 +20,8 @@ const CACHE_TTL_MS = 60 * 1000;
 
 const PUBLIC_PLACEHOLDER = "/images/placeholder.png";
 const UPLOADED_SCREENSHOT = "/mnt/data/c53e2ca1-42d6-45e6-9cda-47676f31311e.png";
+const DEFAULT_COOKED_SECTION_IMAGE =
+  "https://storage.googleapis.com/cccooked/cooked.png";
 const DEFAULT_RTC_SECTION_IMAGE =
   "https://storage.googleapis.com/cccooked/banners/ready%20to%20cook.png";
 const DEFAULT_DESSERT_SECTION_IMAGE =
@@ -101,7 +103,12 @@ function sectionImageFor(category, articles, settings = {}) {
   }
 
   if (normalized === "cooked") {
-    return firstArticleImage(articles);
+    return (
+      settings.cookedSectionImage?.trim() ||
+      DEFAULT_COOKED_SECTION_IMAGE ||
+      firstArticleImage(articles) ||
+      ""
+    );
   }
 
   if (normalized.includes("readytocook") || normalized.includes("rtc")) {
