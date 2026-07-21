@@ -66,6 +66,7 @@ async function hydrateCartItems(items) {
       name: product.name,
       img: product.imgUrl,
       category: product.category,
+      cutInstruction: plain?.cutInstruction?.toString?.() ?? plain?.cutInstruction,
       selectedSize,
       price: getPackPriceForItem(product, selectedSize),
     };
@@ -107,7 +108,7 @@ router.get("/cart", authenticateToken, async (req, res) => {
 // ADD ITEM
 router.post("/cart/add", authenticateToken, async (req, res) => {
   try {
-    const { _id, selectedSize, quantity = 1 } = req.body;
+    const { _id, selectedSize, quantity = 1, cutInstruction = "" } = req.body;
 
     const normalizedSize = Number(selectedSize);
     const qty = Number(quantity);
@@ -166,6 +167,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
       cart.items[idx].name = product.name;
       cart.items[idx].img = product.imgUrl;
       cart.items[idx].category = product.category;
+      cart.items[idx].cutInstruction = String(cutInstruction || "").trim();
     } else {
       if (cart.items.length >= CART_ITEM_LIMIT) {
         return res.status(400).json({ error: "Cart limit reached" });
@@ -178,6 +180,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
         name: product.name,
         img: product.imgUrl,
         category: product.category,
+        cutInstruction: String(cutInstruction || "").trim(),
       });
     }
 
@@ -193,7 +196,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
 // REMOVE ITEM
 router.post("/cart/remove", authenticateToken, async (req, res) => {
   try {
-    const { _id, selectedSize } = req.body;
+    const { _id, selectedSize, cutInstruction = "" } = req.body;
 
     if (!_id || selectedSize === undefined) {
       return res.status(400).json({ error: "Invalid item" });
@@ -202,7 +205,12 @@ router.post("/cart/remove", authenticateToken, async (req, res) => {
     const cart = await getCart(req.user.id);
 
     cart.items = cart.items.filter(
-      (i) => !(i._id.toString() === _id && i.selectedSize === Number(selectedSize)),
+      (i) =>
+        !(
+          i._id.toString() === _id &&
+          i.selectedSize === Number(selectedSize) &&
+          String(i.cutInstruction || "") === String(cutInstruction || "").trim()
+        ),
     );
 
     await cart.save();
@@ -216,7 +224,7 @@ router.post("/cart/remove", authenticateToken, async (req, res) => {
 // UPDATE QUANTITY
 router.post("/cart/update", authenticateToken, async (req, res) => {
   try {
-    const { _id, selectedSize, quantity } = req.body;
+    const { _id, selectedSize, quantity, cutInstruction = "" } = req.body;
 
     if (!validateItemInput(res, { _id, quantity })) {
       return;
@@ -235,13 +243,19 @@ router.post("/cart/update", authenticateToken, async (req, res) => {
     const cart = await getCart(req.user.id);
 
     const item = cart.items.find(
-      (i) => i._id.toString() === _id && i.selectedSize === resolvedSize,
+      (i) =>
+        i._id.toString() === _id &&
+        i.selectedSize === resolvedSize &&
+        String(i.cutInstruction || "") === String(cutInstruction || "").trim(),
     );
 
     if (!item) return res.status(404).json({ error: "Item not found" });
 
     item.quantity = Number(quantity);
     item.category = product.category;
+    if (typeof req.body.cutInstruction === "string") {
+      item.cutInstruction = req.body.cutInstruction.trim();
+    }
     cart.items = await hydrateCartItems(cart.items);
     await cart.save();
     res.json({ cart: cart.items });

@@ -475,6 +475,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
         name: product.name,
         img: product.imgUrl,
         category: product.category,
+        cutInstruction: String(item.cutInstruction || "").trim() || undefined,
         price: unitPrice,
         selectedSize,
         quantity,
