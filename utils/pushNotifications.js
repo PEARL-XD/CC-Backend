@@ -83,11 +83,7 @@ async function sendPersonalizedPromoNotifications({
     const token = doc.token?.trim();
     if (!token) continue;
 
-    const user = tokenToUser.get(doc.user?.toString?.() || "");
-    if (!user) {
-      failureTokens.push(token);
-      continue;
-    }
+    const user = tokenToUser.get(doc.user?.toString?.() || "") || {};
 
     const result = await sendPersonalizedPush({
       token,
@@ -113,12 +109,11 @@ async function sendPersonalizedPromoNotifications({
         .map((token) => {
           const recipient = tokenToDoc.get(token);
           if (!recipient) return null;
-          const user = tokenToUser.get(recipient.user?.toString?.() || "");
-          if (!user) return null;
+          const user = tokenToUser.get(recipient.user?.toString?.() || "") || {};
 
           return {
             notificationId,
-            user: recipient.user,
+            user: recipient.user || null,
             token,
             platform: recipient.platform,
             type: "promo",

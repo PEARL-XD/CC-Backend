@@ -1,4 +1,5 @@
 import express from "express";
+import jwt from "jsonwebtoken";
 import AppOpenAnonymousDaily from "../models/AppOpenAnonymousDaily.js";
 import DeviceToken from "../models/DeviceToken.js";
 import AppOpenDaily from "../models/AppOpenDaily.js";
@@ -27,6 +28,22 @@ function normalizePhone(value = "") {
     return digits.slice(2);
   }
   return digits;
+}
+
+function getOptionalUserId(req) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.split(" ")[1];
+
+  if (!token || !process.env.ACCESS_TOKEN_SECRET) {
+    return null;
+  }
+
+  try {
+    const payload = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+    return payload?.id || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function getIstDateKey(date = new Date()) {
@@ -119,10 +136,11 @@ router.post("/app-opens/track-anonymous", async (req, res) => {
   }
 });
 
-router.post("/notifications/device-token", authenticateToken, async (req, res) => {
+router.post("/notifications/device-token", async (req, res) => {
   try {
     const token = String(req.body.token || "").trim();
     const platform = String(req.body.platform || "").trim().toLowerCase();
+    const userId = getOptionalUserId(req);
 
     if (!token) {
       return res.status(400).json({ error: "Device token is required." });
@@ -136,7 +154,7 @@ router.post("/notifications/device-token", authenticateToken, async (req, res) =
       { token },
       {
         $set: {
-          user: req.user.id,
+          user: userId,
           token,
           platform,
           lastSeenAt: new Date(),
@@ -153,7 +171,11 @@ router.post("/notifications/device-token", authenticateToken, async (req, res) =
       },
     );
 
-    return res.json({ success: true, message: "Device token saved." });
+    return res.json({
+      success: true,
+      message: "Device token saved.",
+      mode: userId ? "linked" : "guest",
+    });
   } catch (error) {
     console.error("Save device token error:", error);
     return res.status(500).json({ error: "Failed to save device token." });
