@@ -38,6 +38,7 @@ async function getOrCreateStorefrontSettings() {
       $setOnInsert: {
         key: STOREFRONT_KEY,
         cookedEnabled: true,
+        readyToEatEnabled: true,
         storeOpen: true,
         packagingFee: 0,
         platformFee: 0,
@@ -69,6 +70,7 @@ router.get("/admin/inventory", async (req, res) => {
     return res.json({
       settings: {
         cookedEnabled: settings?.cookedEnabled ?? true,
+        readyToEatEnabled: settings?.readyToEatEnabled ?? true,
         storeOpen: settings?.storeOpen ?? true,
         packagingFee: settings?.packagingFee ?? 0,
         platformFee: settings?.platformFee ?? 0,
@@ -93,6 +95,7 @@ router.get("/admin/inventory", async (req, res) => {
 router.patch("/admin/storefront", async (req, res) => {
   try {
     const cookedEnabled = req.body.cookedEnabled;
+    const readyToEatEnabled = req.body.readyToEatEnabled;
     const storeOpen = req.body.storeOpen;
     const packagingFee = req.body.packagingFee;
     const platformFee = req.body.platformFee;
@@ -111,6 +114,15 @@ router.patch("/admin/storefront", async (req, res) => {
         });
       }
       updates.cookedEnabled = cookedEnabled;
+    }
+
+    if ("readyToEatEnabled" in req.body) {
+      if (typeof readyToEatEnabled !== "boolean") {
+        return res.status(400).json({
+          error: "readyToEatEnabled must be true or false",
+        });
+      }
+      updates.readyToEatEnabled = readyToEatEnabled;
     }
 
     if ("storeOpen" in req.body) {
@@ -206,6 +218,7 @@ router.patch("/admin/storefront", async (req, res) => {
 
     if (
       !("cookedEnabled" in req.body) &&
+      !("readyToEatEnabled" in req.body) &&
       !("storeOpen" in req.body) &&
       !("packagingFee" in req.body) &&
       !("platformFee" in req.body) &&
@@ -233,6 +246,7 @@ router.patch("/admin/storefront", async (req, res) => {
       success: true,
       settings: {
         cookedEnabled: settings.cookedEnabled,
+        readyToEatEnabled: settings.readyToEatEnabled ?? true,
         storeOpen: settings.storeOpen,
         packagingFee: settings.packagingFee ?? 0,
         platformFee: settings.platformFee ?? 0,

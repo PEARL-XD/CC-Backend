@@ -13,6 +13,10 @@ import {
   normalizePackSize,
   normalizePricingMode,
 } from "../utils/packPricing.js";
+import {
+  getSectionDisabledReason,
+  isSectionDisabledForCategory,
+} from "../utils/storefrontSections.js";
 
 const router = express.Router();
 router.use(authLimiter);
@@ -138,12 +142,11 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
       key: "storefront",
     }).lean();
 
-    const cookedEnabled = settings?.cookedEnabled ?? true;
-    const isCooked = mode === "cooked";
+    const sectionDisabled = isSectionDisabledForCategory(product.category, settings);
 
-    if (isCooked && !cookedEnabled) {
+    if (sectionDisabled) {
       return res.status(400).json({
-        error: "Cooked food is coming soon to your society.",
+        error: getSectionDisabledReason(product.category),
       });
     }
 

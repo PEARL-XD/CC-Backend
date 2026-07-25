@@ -13,6 +13,10 @@ import {
   normalizePricingMode,
 } from "../utils/packPricing.js";
 import {
+  getSectionDisabledReason,
+  isSectionDisabledForCategory,
+} from "../utils/storefrontSections.js";
+import {
   validateCouponForUser,
   redeemCouponForOrder,
 } from "../utils/coupons.js";
@@ -402,7 +406,6 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       key: "storefront",
     }).lean();
 
-    const cookedEnabled = settings?.cookedEnabled ?? true;
     const storeOpen = settings?.storeOpen ?? true;
     const packagingFee = Number(settings?.packagingFee || 0);
     const platformFee = Number(settings?.platformFee || 0);
@@ -443,11 +446,11 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
         });
       }
 
-      const isCooked = normalizePricingMode(product) === "cooked";
+      const sectionDisabled = isSectionDisabledForCategory(product.category, settings);
 
-      if (isCooked && !cookedEnabled) {
+      if (sectionDisabled) {
         return res.status(400).json({
-          error: "Cooked food is coming soon to your society.",
+          error: getSectionDisabledReason(product.category),
         });
       }
 

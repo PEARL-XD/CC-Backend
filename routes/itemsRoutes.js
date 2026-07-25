@@ -9,6 +9,10 @@ import {
   getPackOptions,
   normalizePricingMode,
 } from "../utils/packPricing.js";
+import {
+  getSectionDisabledReason,
+  isSectionDisabledForCategory,
+} from "../utils/storefrontSections.js";
 
 const router = express.Router();
 
@@ -169,6 +173,7 @@ async function getStorefrontSettings() {
   const settings = await StorefrontSettings.findOne({ key: "storefront" }).lean();
   return {
     cookedEnabled: settings?.cookedEnabled ?? true,
+    readyToEatEnabled: settings?.readyToEatEnabled ?? true,
     storeOpen: settings?.storeOpen ?? true,
     packagingFee: settings?.packagingFee ?? 0,
     platformFee: settings?.platformFee ?? 0,
@@ -181,10 +186,6 @@ async function getStorefrontSettings() {
     bannerMessage: settings?.bannerMessage ?? "",
     bannerTone: settings?.bannerTone ?? "info",
   };
-}
-
-function isCookedCategory(category) {
-  return String(category || "").trim().toLowerCase() === "cooked";
 }
 
 router.get("/items", async (req, res) => {
@@ -209,7 +210,7 @@ router.get("/items", async (req, res) => {
     for (const it of items) {
       const img = chooseImageUrl(it.imgUrl);
       const category = it.category || "Uncategorized";
-      const sectionDisabled = isCookedCategory(category) && !settings.cookedEnabled;
+      const sectionDisabled = isSectionDisabledForCategory(category, settings);
       const pricing = buildPricingPayload(it);
 
       if (!categoryMap.has(category)) categoryMap.set(category, []);
@@ -247,15 +248,14 @@ router.get("/items", async (req, res) => {
 
     const sections = [];
     for (const [category, articles] of categoryMap.entries()) {
-      const sectionDisabled = isCookedCategory(category) && !settings.cookedEnabled;
-
-    sections.push({
-      title: category,
-      image: sectionImageFor(category, articles, settings),
-      imageAsset: sectionImageAssetFor(category),
-      isDisabled: sectionDisabled,
-      disabledReason: sectionDisabled
-        ? "Cooked section is not available right now."
+      const sectionDisabled = isSectionDisabledForCategory(category, settings);
+      sections.push({
+        title: category,
+        image: sectionImageFor(category, articles, settings),
+        imageAsset: sectionImageAssetFor(category),
+        isDisabled: sectionDisabled,
+        disabledReason: sectionDisabled
+          ? getSectionDisabledReason(category)
           : "",
         articles,
       });
@@ -328,8 +328,7 @@ router.get("/items/search", async (req, res) => {
     }
 
     const normalized = results.map((it) => {
-      const sectionDisabled =
-        isCookedCategory(it.category) && !settings.cookedEnabled;
+      const sectionDisabled = isSectionDisabledForCategory(it.category, settings);
       const pricing = buildPricingPayload(it);
 
       return {
@@ -374,8 +373,7 @@ router.get("/items/:id", async (req, res) => {
 
     if (!item) return res.status(404).json({ error: "Item not found" });
 
-    const sectionDisabled =
-      isCookedCategory(item.category) && !settings.cookedEnabled;
+    const sectionDisabled = isSectionDisabledForCategory(item.category, settings);
     const pricing = buildPricingPayload(item);
 
     return res.json({

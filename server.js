@@ -17,6 +17,7 @@ import supportRoutes from "./routes/support.js";
 import adminInventoryRoutes from "./routes/adminInventoryRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import couponRoutes from "./routes/couponRoutes.js";
+import StorefrontSettings from "./models/StorefrontSettings.js";
 const app = express();
 
 /* =======================
@@ -78,6 +79,51 @@ cron.schedule("*/13 * * * *", async () => {
     console.error("❌ Cron cleanup error:", error);
   }
 });
+
+async function setStoreOpenStatus(storeOpen) {
+  const settings = await StorefrontSettings.findOneAndUpdate(
+    { key: "storefront" },
+    {
+      $set: {
+        key: "storefront",
+        storeOpen,
+      },
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
+    },
+  ).lean();
+
+  console.log(
+    `Store auto-schedule updated storeOpen=${settings?.storeOpen ? "true" : "false"}`,
+  );
+}
+
+cron.schedule(
+  "45 8 * * *",
+  async () => {
+    try {
+      await setStoreOpenStatus(true);
+    } catch (error) {
+      console.error("Store open cron error:", error);
+    }
+  },
+  { timezone: "Asia/Kolkata" },
+);
+
+cron.schedule(
+  "25 21 * * *",
+  async () => {
+    try {
+      await setStoreOpenStatus(false);
+    } catch (error) {
+      console.error("Store close cron error:", error);
+    }
+  },
+  { timezone: "Asia/Kolkata" },
+);
 
 /* =======================
    START SERVER (HTTP ONLY)
