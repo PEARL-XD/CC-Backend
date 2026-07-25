@@ -47,6 +47,10 @@ const refreshCookieOptions = {
   maxAge: REFRESH_TOKEN_MAX_AGE_MS,
 };
 
+const PRICE_NOTICE_LAUNCH_AT = new Date(
+  process.env.PRICE_NOTICE_LAUNCH_AT || "2026-07-25T00:00:00+05:30",
+);
+
 const avatarStyles = new Set(["neutral", "male", "female"]);
 
 const resend = process.env.RESEND_API_KEY
@@ -105,6 +109,24 @@ function normalizeAvatarStyle(value) {
   if (value === undefined) return undefined;
   const avatarStyle = normalizeText(value).toLowerCase();
   return avatarStyles.has(avatarStyle) ? avatarStyle : null;
+}
+
+function shouldShowPriceNotice(user) {
+  const createdAt = user?.createdAt ? new Date(user.createdAt) : null;
+  if (!createdAt || Number.isNaN(createdAt.getTime())) return false;
+
+  const seenAt = user?.priceNoticeSeenAt ? new Date(user.priceNoticeSeenAt) : null;
+  if (seenAt && !Number.isNaN(seenAt.getTime())) return false;
+
+  return createdAt >= PRICE_NOTICE_LAUNCH_AT;
+}
+
+function buildClientUser(user) {
+  const plainUser = user?.toObject ? user.toObject() : { ...user };
+  return {
+    ...plainUser,
+    showPriceNotice: shouldShowPriceNotice(plainUser),
+  };
 }
 
 function isValidEmail(email) {
@@ -240,7 +262,7 @@ router.get("/me", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "User not found." });
     }
 
-    return res.json({ user });
+    return res.json({ user: buildClientUser(user) });
   } catch (error) {
     console.error("Error fetching user profile:", error);
     return res.status(500).json({ error: "Server error." });
@@ -429,11 +451,43 @@ router.post("/login", authLimiter, async (req, res) => {
         tower: user.tower,
         floor: user.floor,
         flat: user.flat,
+        createdAt: user.createdAt,
+        priceNoticeSeenAt: user.priceNoticeSeenAt,
+        showPriceNotice: shouldShowPriceNotice(user),
       },
     });
   } catch (error) {
     console.error("Login error:", error);
     return res.status(500).json({ error: "Server error during login." });
+  }
+});
+
+// POST /users/price-notice/ack
+router.post("/users/price-notice/ack", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        priceNoticeSeenAt: new Date(),
+      },
+      {
+        new: true,
+      },
+    ).select(sanitizeUserQuery());
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    return res.json({
+      success: true,
+      user: buildClientUser(user),
+    });
+  } catch (error) {
+    console.error("Price notice ack error:", error);
+    return res.status(500).json({ error: "Could not save notice state." });
   }
 });
 
