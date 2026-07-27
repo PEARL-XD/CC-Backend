@@ -5,6 +5,7 @@ import User from "../models/User.js";
 import { authenticateToken } from "./auth.js";
 import { clearItemsCache } from "./itemsRoutes.js";
 import { findItemByIdFlexible } from "../utils/itemLookup.js";
+import { clearStorefrontSettingsCache } from "../utils/storefrontSettingsCache.js";
 
 const router = express.Router();
 
@@ -40,6 +41,7 @@ async function getOrCreateStorefrontSettings() {
         cookedEnabled: true,
         readyToEatEnabled: true,
         storeOpen: true,
+        twoTimeModeEnabled: false,
         packagingFee: 0,
         platformFee: 0,
         rtcSectionImage: DEFAULT_RTC_SECTION_IMAGE,
@@ -72,6 +74,7 @@ router.get("/admin/inventory", async (req, res) => {
         cookedEnabled: settings?.cookedEnabled ?? true,
         readyToEatEnabled: settings?.readyToEatEnabled ?? true,
         storeOpen: settings?.storeOpen ?? true,
+        twoTimeModeEnabled: settings?.twoTimeModeEnabled ?? false,
         packagingFee: settings?.packagingFee ?? 0,
         platformFee: settings?.platformFee ?? 0,
         rtcSectionImage:
@@ -97,6 +100,7 @@ router.patch("/admin/storefront", async (req, res) => {
     const cookedEnabled = req.body.cookedEnabled;
     const readyToEatEnabled = req.body.readyToEatEnabled;
     const storeOpen = req.body.storeOpen;
+    const twoTimeModeEnabled = req.body.twoTimeModeEnabled;
     const packagingFee = req.body.packagingFee;
     const platformFee = req.body.platformFee;
     const rtcSectionImage = req.body.rtcSectionImage;
@@ -132,6 +136,15 @@ router.patch("/admin/storefront", async (req, res) => {
         });
       }
       updates.storeOpen = storeOpen;
+    }
+
+    if ("twoTimeModeEnabled" in req.body) {
+      if (typeof twoTimeModeEnabled !== "boolean") {
+        return res.status(400).json({
+          error: "twoTimeModeEnabled must be true or false",
+        });
+      }
+      updates.twoTimeModeEnabled = twoTimeModeEnabled;
     }
 
     if ("packagingFee" in req.body) {
@@ -220,6 +233,7 @@ router.patch("/admin/storefront", async (req, res) => {
       !("cookedEnabled" in req.body) &&
       !("readyToEatEnabled" in req.body) &&
       !("storeOpen" in req.body) &&
+      !("twoTimeModeEnabled" in req.body) &&
       !("packagingFee" in req.body) &&
       !("platformFee" in req.body) &&
       !("rtcSectionImage" in req.body) &&
@@ -241,6 +255,7 @@ router.patch("/admin/storefront", async (req, res) => {
     ).lean();
 
     clearItemsCache();
+    clearStorefrontSettingsCache();
 
     return res.json({
       success: true,
@@ -248,6 +263,7 @@ router.patch("/admin/storefront", async (req, res) => {
         cookedEnabled: settings.cookedEnabled,
         readyToEatEnabled: settings.readyToEatEnabled ?? true,
         storeOpen: settings.storeOpen,
+        twoTimeModeEnabled: settings.twoTimeModeEnabled ?? false,
         packagingFee: settings.packagingFee ?? 0,
         platformFee: settings.platformFee ?? 0,
         rtcSectionImage:

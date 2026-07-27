@@ -2,7 +2,6 @@ import express from "express";
 import { authenticateToken, authLimiter } from "./auth.js";
 import Cart from "../models/Cart.js";
 import Item from "../models/Item.js";
-import StorefrontSettings from "../models/StorefrontSettings.js";
 import {
   findItemByIdFlexible,
   findItemsByIdsFlexible,
@@ -17,6 +16,7 @@ import {
   getSectionDisabledReason,
   isSectionDisabledForCategory,
 } from "../utils/storefrontSections.js";
+import { getStorefrontSettings } from "../utils/storefrontSettingsCache.js";
 
 const router = express.Router();
 router.use(authLimiter);
@@ -138,9 +138,7 @@ router.post("/cart/add", authenticateToken, async (req, res) => {
       });
     }
 
-    const settings = await StorefrontSettings.findOne({
-      key: "storefront",
-    }).lean();
+    const settings = await getStorefrontSettings();
 
     const sectionDisabled = isSectionDisabledForCategory(product.category, settings);
 

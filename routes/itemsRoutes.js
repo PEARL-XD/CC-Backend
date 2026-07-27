@@ -1,7 +1,6 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import Item from "../models/Item.js";
-import StorefrontSettings from "../models/StorefrontSettings.js";
 import { findItemByIdFlexible } from "../utils/itemLookup.js";
 import {
   getDefaultDisplayPriceForItem,
@@ -13,6 +12,9 @@ import {
   getSectionDisabledReason,
   isSectionDisabledForCategory,
 } from "../utils/storefrontSections.js";
+import {
+  getStorefrontSettings,
+} from "../utils/storefrontSettingsCache.js";
 
 const router = express.Router();
 
@@ -166,25 +168,6 @@ function buildPricingPayload(item) {
     showSizeSelector: pricingMode !== "single",
     pricingOptions,
     displayPrice: getDefaultDisplayPriceForItem(item),
-  };
-}
-
-async function getStorefrontSettings() {
-  const settings = await StorefrontSettings.findOne({ key: "storefront" }).lean();
-  return {
-    cookedEnabled: settings?.cookedEnabled ?? true,
-    readyToEatEnabled: settings?.readyToEatEnabled ?? true,
-    storeOpen: settings?.storeOpen ?? true,
-    packagingFee: settings?.packagingFee ?? 0,
-    platformFee: settings?.platformFee ?? 0,
-    rtcSectionImage:
-      settings?.rtcSectionImage?.trim() || DEFAULT_RTC_SECTION_IMAGE,
-    dessertSectionImage:
-      settings?.dessertSectionImage?.trim() || DEFAULT_DESSERT_SECTION_IMAGE,
-    bannerEnabled: settings?.bannerEnabled ?? false,
-    bannerTitle: settings?.bannerTitle ?? "",
-    bannerMessage: settings?.bannerMessage ?? "",
-    bannerTone: settings?.bannerTone ?? "info",
   };
 }
 

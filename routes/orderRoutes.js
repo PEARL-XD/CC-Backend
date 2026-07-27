@@ -4,7 +4,6 @@ import { razorpay } from "../config/razorpay.js";
 import { Order } from "../models/Order.js";
 import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
-import StorefrontSettings from "../models/StorefrontSettings.js";
 import { sendPushToAdmins, sendPushToUser } from "../utils/pushNotifications.js";
 import { findItemsByIdsFlexible } from "../utils/itemLookup.js";
 import {
@@ -16,12 +15,16 @@ import {
   getSectionDisabledReason,
   isSectionDisabledForCategory,
 } from "../utils/storefrontSections.js";
+import { getStorefrontSettings } from "../utils/storefrontSettingsCache.js";
 import {
   validateCouponForUser,
   redeemCouponForOrder,
 } from "../utils/coupons.js";
 
 const router = express.Router();
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const TWO_TIME_MORNING_SLOT = "9:00 AM - 12:00 PM";
+const TWO_TIME_EVENING_SLOT = "5:00 PM - 7:00 PM";
 
 /* ---------------- HELPERS ---------------- */
 
@@ -87,6 +90,58 @@ const logOrderSummary = (label, order) => {
     itemCount: formatOrderItemCount(order),
     silentDelivery: Boolean(order.silentDelivery),
   });
+};
+
+const getIstMinutesNow = (date = new Date()) => {
+  const istDate = new Date(date.getTime() + IST_OFFSET_MS);
+  return istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
+};
+
+const isTwoTimeMorningAllowed = (date = new Date()) => {
+  const minutes = getIstMinutesNow(date);
+  return minutes < 8 * 60 || minutes >= 21 * 60;
+};
+
+const isTwoTimeEveningAllowed = (date = new Date()) => {
+  const minutes = getIstMinutesNow(date);
+  return minutes < 18 * 60;
+};
+
+const validateTwoTimeSchedule = (scheduleText) => {
+  if (!scheduleText) {
+    return {
+      ok: false,
+      error: "Please choose a delivery slot.",
+    };
+  }
+
+  if (scheduleText === TWO_TIME_MORNING_SLOT) {
+    if (!isTwoTimeMorningAllowed()) {
+      return {
+        ok: false,
+        error:
+          "The morning slot is available from the previous night until 8:00 AM.",
+      };
+    }
+
+    return { ok: true };
+  }
+
+  if (scheduleText === TWO_TIME_EVENING_SLOT) {
+    if (!isTwoTimeEveningAllowed()) {
+      return {
+        ok: false,
+        error: "The evening slot is available only before 6:00 PM.",
+      };
+    }
+
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    error: "Please choose one of the available delivery slots.",
+  };
 };
 
 const sendOrderStatusNotification = async (order, status) => {
@@ -402,11 +457,10 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     const productIds = cartItems.map((i) => i._id);
     const products = await findItemsByIdsFlexible(productIds);
 
-    const settings = await StorefrontSettings.findOne({
-      key: "storefront",
-    }).lean();
+    const settings = await getStorefrontSettings();
 
     const storeOpen = settings?.storeOpen ?? true;
+    const twoTimeModeEnabled = settings?.twoTimeModeEnabled === true;
     const packagingFee = Number(settings?.packagingFee || 0);
     const platformFee = Number(settings?.platformFee || 0);
     const scheduleText = String(schedule || "").trim();
@@ -418,7 +472,14 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       });
     }
 
-    if (!storeOpen && !scheduleText) {
+    if (twoTimeModeEnabled) {
+      const scheduleValidation = validateTwoTimeSchedule(scheduleText);
+      if (!scheduleValidation.ok) {
+        return res.status(400).json({
+          error: scheduleValidation.error,
+        });
+      }
+    } else if (!storeOpen && !scheduleText) {
       return res.status(400).json({
         error:
           "Store is closed right now. It reopens in the morning, but you can schedule your order for now.",

@@ -18,6 +18,7 @@ import adminInventoryRoutes from "./routes/adminInventoryRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import couponRoutes from "./routes/couponRoutes.js";
 import StorefrontSettings from "./models/StorefrontSettings.js";
+import { clearStorefrontSettingsCache } from "./utils/storefrontSettingsCache.js";
 const app = express();
 
 /* =======================
@@ -99,6 +100,7 @@ async function setStoreOpenStatus(storeOpen) {
   console.log(
     `Store auto-schedule updated storeOpen=${settings?.storeOpen ? "true" : "false"}`,
   );
+  clearStorefrontSettingsCache();
 }
 
 cron.schedule(

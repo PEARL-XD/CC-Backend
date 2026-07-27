@@ -11,6 +11,7 @@ const storefrontSettingsSchema = new mongoose.Schema(
     cookedEnabled: { type: Boolean, default: true },
     readyToEatEnabled: { type: Boolean, default: true },
     storeOpen: { type: Boolean, default: true },
+    twoTimeModeEnabled: { type: Boolean, default: false },
     packagingFee: { type: Number, default: 0 },
     platformFee: { type: Number, default: 0 },
     rtcSectionImage: { type: String, default: DEFAULT_RTC_SECTION_IMAGE },
