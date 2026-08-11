@@ -11,6 +11,9 @@ import RefreshToken from "../models/RefreshToken.js";
 import Cart from "../models/Cart.js";
 import DeviceToken from "../models/DeviceToken.js";
 import SupportTicket from "../models/SupportTicket.js";
+import StorefrontSettings from "../models/StorefrontSettings.js";
+import { evaluateServiceability } from "../utils/serviceability.js";
+import { buildStorefrontSettingsPayload } from "../utils/storefrontSettingsCache.js";
 
 const verifyAsync = promisify(jwt.verify);
 const router = express.Router();
@@ -127,6 +130,65 @@ function buildClientUser(user) {
     ...plainUser,
     showPriceNotice: shouldShowPriceNotice(plainUser),
   };
+}
+
+function normalizeOptionalText(value) {
+  if (value === undefined) return undefined;
+  return normalizeText(value);
+}
+
+function normalizeOptionalNumber(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildDeliveryLocationFromBody(body = {}) {
+  const latitude = normalizeOptionalNumber(body.latitude);
+  const longitude = normalizeOptionalNumber(body.longitude);
+
+  return {
+    latitude,
+    longitude,
+    addressLine: normalizeOptionalText(body.addressLine),
+    placeName: normalizeOptionalText(body.placeName),
+    street: normalizeOptionalText(body.street),
+    subLocality: normalizeOptionalText(body.subLocality),
+    locality: normalizeOptionalText(body.locality),
+    administrativeArea: normalizeOptionalText(body.administrativeArea),
+    postalCode: normalizeOptionalText(body.postalCode),
+    tower: normalizeOptionalText(body.tower),
+    floor: normalizeOptionalText(body.floor),
+    flat: normalizeOptionalText(body.flat),
+  };
+}
+
+function hasDeliveryLocation(location = {}) {
+  return (
+    location.latitude !== undefined ||
+    location.longitude !== undefined ||
+    location.addressLine !== undefined ||
+    location.placeName !== undefined ||
+    location.street !== undefined ||
+    location.subLocality !== undefined ||
+    location.locality !== undefined ||
+    location.administrativeArea !== undefined ||
+    location.postalCode !== undefined ||
+    location.tower !== undefined ||
+    location.floor !== undefined ||
+    location.flat !== undefined
+  );
+}
+
+async function resolveServiceability(location = {}) {
+  const settings = await StorefrontSettings.findOne({
+    key: "storefront",
+  }).lean();
+
+  return evaluateServiceability(
+    location,
+    buildStorefrontSettingsPayload(settings || {}),
+  );
 }
 
 function isValidEmail(email) {
@@ -269,6 +331,29 @@ router.get("/me", authenticateToken, async (req, res) => {
   }
 });
 
+// POST /serviceability/check
+router.post("/serviceability/check", async (req, res) => {
+  try {
+    const location = buildDeliveryLocationFromBody(req.body);
+    if (!hasDeliveryLocation(location)) {
+      return res.status(400).json({ error: "Location data is required." });
+    }
+
+    const serviceability = await resolveServiceability({
+      ...location,
+      society: normalizeText(req.body.society || ""),
+    });
+
+    return res.json({
+      success: true,
+      serviceability,
+    });
+  } catch (error) {
+    console.error("Serviceability check error:", error);
+    return res.status(500).json({ error: "Could not check serviceability." });
+  }
+});
+
 // POST /register
 router.post("/register", authLimiter, async (req, res) => {
   try {
@@ -280,6 +365,7 @@ router.post("/register", authLimiter, async (req, res) => {
     const tower = normalizeText(req.body.tower);
     const floor = normalizeText(req.body.floor);
     const flat = normalizeText(req.body.flat);
+    const deliveryLocation = buildDeliveryLocationFromBody(req.body);
 
     if (
       !name ||
@@ -325,6 +411,13 @@ router.post("/register", authLimiter, async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
+    const serviceability = hasDeliveryLocation(deliveryLocation)
+      ? await resolveServiceability({
+          ...deliveryLocation,
+          society,
+        })
+      : { serviceable: true, method: "none", message: "" };
+
     const user = new User({
       name,
       email,
@@ -334,6 +427,17 @@ router.post("/register", authLimiter, async (req, res) => {
       tower,
       floor,
       flat,
+      ...(hasDeliveryLocation(deliveryLocation)
+        ? {
+            deliveryLocation: {
+              ...deliveryLocation,
+              serviceable: serviceability.serviceable,
+              serviceabilityMethod: serviceability.method,
+              serviceabilityMessage: serviceability.message,
+              checkedAt: new Date(),
+            },
+          }
+        : {}),
     });
 
     await user.save();
@@ -349,6 +453,8 @@ router.post("/register", authLimiter, async (req, res) => {
         tower: user.tower,
         floor: user.floor,
         flat: user.flat,
+        deliveryLocation: user.deliveryLocation,
+        serviceability,
       },
     });
   } catch (error) {
@@ -451,6 +557,7 @@ router.post("/login", authLimiter, async (req, res) => {
         tower: user.tower,
         floor: user.floor,
         flat: user.flat,
+        deliveryLocation: user.deliveryLocation,
         createdAt: user.createdAt,
         priceNoticeSeenAt: user.priceNoticeSeenAt,
         showPriceNotice: shouldShowPriceNotice(user),
@@ -563,6 +670,12 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
       req.body.floor !== undefined ? normalizeText(req.body.floor) : undefined;
     const flat =
       req.body.flat !== undefined ? normalizeText(req.body.flat) : undefined;
+    const deliveryLocation =
+      hasDeliveryLocation(req.body.location || {})
+        ? buildDeliveryLocationFromBody(req.body.location)
+        : hasDeliveryLocation(req.body)
+          ? buildDeliveryLocationFromBody(req.body)
+          : undefined;
     const avatarStyle = normalizeAvatarStyle(req.body.avatarStyle);
 
     if (!name || !email || !phone) {
@@ -601,6 +714,22 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "Invalid avatar style." });
     }
 
+    if (deliveryLocation) {
+      if (
+        (deliveryLocation.latitude === null && req.body.location?.latitude !== undefined) ||
+        (deliveryLocation.longitude === null && req.body.location?.longitude !== undefined)
+      ) {
+        return res.status(400).json({ error: "Invalid delivery location coordinates." });
+      }
+    }
+
+    const serviceability = deliveryLocation
+      ? await resolveServiceability({
+          ...deliveryLocation,
+          society: society ?? req.body.location?.society ?? "",
+        })
+      : null;
+
     const existingPhone = await User.findOne({
       phone,
       _id: { $ne: userId },
@@ -623,6 +752,15 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     if (floor !== undefined) updates.floor = floor;
     if (flat !== undefined) updates.flat = flat;
     if (avatarStyle !== undefined) updates.avatarStyle = avatarStyle;
+    if (deliveryLocation) {
+      updates.deliveryLocation = {
+        ...deliveryLocation,
+        serviceable: serviceability?.serviceable ?? false,
+        serviceabilityMethod: serviceability?.method ?? "",
+        serviceabilityMessage: serviceability?.message ?? "",
+        checkedAt: new Date(),
+      };
+    }
 
     const user = await User.findByIdAndUpdate(userId, updates, {
       new: true,
@@ -642,6 +780,72 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     return res
       .status(500)
       .json({ error: "Server error while updating profile." });
+  }
+});
+
+// PATCH /users/location
+router.patch("/users/location", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const location = buildDeliveryLocationFromBody(req.body);
+
+    if (!hasDeliveryLocation(location)) {
+      return res.status(400).json({ error: "Location data is required." });
+    }
+
+    if (
+      (location.latitude === null && req.body.latitude !== undefined) ||
+      (location.longitude === null && req.body.longitude !== undefined)
+    ) {
+      return res.status(400).json({ error: "Invalid location coordinates." });
+    }
+
+    const serviceability = await resolveServiceability({
+      ...location,
+      society: normalizeText(req.body.society || ""),
+    });
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        deliveryLocation: {
+          ...location,
+          serviceable: serviceability.serviceable,
+          serviceabilityMethod: serviceability.method,
+          serviceabilityMessage: serviceability.message,
+          checkedAt: new Date(),
+        },
+        ...(req.body.tower !== undefined
+          ? { tower: normalizeText(req.body.tower) }
+          : {}),
+        ...(req.body.floor !== undefined
+          ? { floor: normalizeText(req.body.floor) }
+          : {}),
+        ...(req.body.flat !== undefined
+          ? { flat: normalizeText(req.body.flat) }
+          : {}),
+        ...(req.body.society !== undefined
+          ? { society: normalizeText(req.body.society) }
+          : {}),
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    ).select(sanitizeUserQuery());
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    return res.json({
+      success: true,
+      user: buildClientUser(user),
+      serviceability,
+    });
+  } catch (error) {
+    console.error("Location save error:", error);
+    return res.status(500).json({ error: "Could not save location." });
   }
 });
 

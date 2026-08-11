@@ -16,6 +16,20 @@ const storefrontSettingsSchema = new mongoose.Schema(
     platformFee: { type: Number, default: 0 },
     rtcSectionImage: { type: String, default: DEFAULT_RTC_SECTION_IMAGE },
     dessertSectionImage: { type: String, default: DEFAULT_DESSERT_SECTION_IMAGE },
+    serviceableSocieties: { type: [String], default: [] },
+    serviceableLocalities: { type: [String], default: [] },
+    serviceAreaPolygon: {
+      type: [
+        {
+          latitude: { type: Number, required: true },
+          longitude: { type: Number, required: true },
+        },
+      ],
+      default: [],
+    },
+    serviceAreaCenterLat: { type: Number, default: null },
+    serviceAreaCenterLng: { type: Number, default: null },
+    serviceAreaRadiusMeters: { type: Number, default: null },
     bannerEnabled: { type: Boolean, default: false },
     bannerTitle: { type: String, default: "" },
     bannerMessage: { type: String, default: "" },
