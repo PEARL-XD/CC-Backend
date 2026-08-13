@@ -151,6 +151,7 @@ function buildDeliveryLocationFromBody(body = {}) {
     latitude,
     longitude,
     addressLine: normalizeOptionalText(body.addressLine),
+    addressLabel: normalizeOptionalText(body.addressLabel),
     placeName: normalizeOptionalText(body.placeName),
     street: normalizeOptionalText(body.street),
     subLocality: normalizeOptionalText(body.subLocality),
@@ -168,6 +169,7 @@ function hasDeliveryLocation(location = {}) {
     location.latitude !== undefined ||
     location.longitude !== undefined ||
     location.addressLine !== undefined ||
+    location.addressLabel !== undefined ||
     location.placeName !== undefined ||
     location.street !== undefined ||
     location.subLocality !== undefined ||
@@ -177,6 +179,20 @@ function hasDeliveryLocation(location = {}) {
     location.tower !== undefined ||
     location.floor !== undefined ||
     location.flat !== undefined
+  );
+}
+
+function deriveSocietyFromLocation(location = {}) {
+  return (
+    normalizeText(location.society) ||
+    normalizeText(location.addressLabel) ||
+    normalizeText(location.locality) ||
+    normalizeText(location.subLocality) ||
+    normalizeText(location.administrativeArea) ||
+    normalizeText(location.placeName) ||
+    normalizeText(location.addressLine) ||
+    normalizeText(location.street) ||
+    normalizeText(location.tower)
   );
 }
 
@@ -361,20 +377,21 @@ router.post("/register", authLimiter, async (req, res) => {
     const email = normalizeEmail(req.body.email);
     const phone = normalizePhone(req.body.phone);
     const password = req.body.password ?? "";
-    const society = normalizeText(req.body.society);
     const tower = normalizeText(req.body.tower);
     const floor = normalizeText(req.body.floor);
     const flat = normalizeText(req.body.flat);
     const deliveryLocation = buildDeliveryLocationFromBody(req.body);
+    const requestedSociety = normalizeText(req.body.society);
+    const society = requestedSociety || deriveSocietyFromLocation(deliveryLocation);
 
     if (
       !name ||
       !email ||
       !phone ||
       !password ||
-      !society ||
       !tower ||
-      !flat
+      !flat ||
+      (!requestedSociety && !hasDeliveryLocation(deliveryLocation))
     ) {
       return res.status(400).json({ error: "All fields are required." });
     }
@@ -802,8 +819,16 @@ router.patch("/users/location", authenticateToken, async (req, res) => {
 
     const serviceability = await resolveServiceability({
       ...location,
-      society: normalizeText(req.body.society || ""),
+      society: deriveSocietyFromLocation({
+        ...location,
+        society: req.body.society,
+      }),
     });
+
+    const societyUpdate =
+      req.body.society !== undefined
+        ? normalizeText(req.body.society)
+        : deriveSocietyFromLocation(location);
 
     const user = await User.findByIdAndUpdate(
       userId,
@@ -824,9 +849,7 @@ router.patch("/users/location", authenticateToken, async (req, res) => {
         ...(req.body.flat !== undefined
           ? { flat: normalizeText(req.body.flat) }
           : {}),
-        ...(req.body.society !== undefined
-          ? { society: normalizeText(req.body.society) }
-          : {}),
+        ...(societyUpdate ? { society: societyUpdate } : {}),
       },
       {
         new: true,

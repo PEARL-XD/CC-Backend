@@ -14,6 +14,7 @@ const userSchema = new mongoose.Schema(
       latitude: { type: Number, default: null },
       longitude: { type: Number, default: null },
       addressLine: { type: String, default: "" },
+      addressLabel: { type: String, default: "" },
       placeName: { type: String, default: "" },
       street: { type: String, default: "" },
       subLocality: { type: String, default: "" },
