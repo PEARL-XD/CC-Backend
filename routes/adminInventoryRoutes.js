@@ -46,6 +46,10 @@ async function getOrCreateStorefrontSettings() {
         platformFee: 0,
         rtcSectionImage: DEFAULT_RTC_SECTION_IMAGE,
         dessertSectionImage: DEFAULT_DESSERT_SECTION_IMAGE,
+        serviceAreaPolygon: [],
+        serviceAreaCenterLat: null,
+        serviceAreaCenterLng: null,
+        serviceAreaRadiusMeters: null,
         bannerEnabled: false,
         bannerTitle: "",
         bannerMessage: "",
@@ -82,6 +86,12 @@ router.get("/admin/inventory", async (req, res) => {
         dessertSectionImage:
           settings?.dessertSectionImage?.trim() ||
           DEFAULT_DESSERT_SECTION_IMAGE,
+        serviceAreaPolygon: Array.isArray(settings?.serviceAreaPolygon)
+          ? settings.serviceAreaPolygon
+          : [],
+        serviceAreaCenterLat: settings?.serviceAreaCenterLat ?? null,
+        serviceAreaCenterLng: settings?.serviceAreaCenterLng ?? null,
+        serviceAreaRadiusMeters: settings?.serviceAreaRadiusMeters ?? null,
         bannerEnabled: settings?.bannerEnabled ?? false,
         bannerTitle: settings?.bannerTitle ?? "",
         bannerMessage: settings?.bannerMessage ?? "",
@@ -105,6 +115,10 @@ router.patch("/admin/storefront", async (req, res) => {
     const platformFee = req.body.platformFee;
     const rtcSectionImage = req.body.rtcSectionImage;
     const dessertSectionImage = req.body.dessertSectionImage;
+    const serviceAreaPolygon = req.body.serviceAreaPolygon;
+    const serviceAreaCenterLat = req.body.serviceAreaCenterLat;
+    const serviceAreaCenterLng = req.body.serviceAreaCenterLng;
+    const serviceAreaRadiusMeters = req.body.serviceAreaRadiusMeters;
     const bannerEnabled = req.body.bannerEnabled;
     const bannerTitle = req.body.bannerTitle;
     const bannerMessage = req.body.bannerMessage;
@@ -185,6 +199,72 @@ router.patch("/admin/storefront", async (req, res) => {
       updates.dessertSectionImage = dessertSectionImage.trim();
     }
 
+    if ("serviceAreaPolygon" in req.body) {
+      if (serviceAreaPolygon == null) {
+        updates.serviceAreaPolygon = [];
+      } else if (!Array.isArray(serviceAreaPolygon)) {
+        return res.status(400).json({
+          error: "serviceAreaPolygon must be an array",
+        });
+      } else {
+        const normalizedPolygon = [];
+        for (const point of serviceAreaPolygon) {
+          const latitude = Number(point?.latitude);
+          const longitude = Number(point?.longitude);
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+            return res.status(400).json({
+              error: "serviceAreaPolygon points must include valid latitude and longitude",
+            });
+          }
+          normalizedPolygon.push({ latitude, longitude });
+        }
+
+        updates.serviceAreaPolygon = normalizedPolygon;
+      }
+    }
+
+    if ("serviceAreaCenterLat" in req.body) {
+      if (serviceAreaCenterLat == null || serviceAreaCenterLat === "") {
+        updates.serviceAreaCenterLat = null;
+      } else {
+        const parsed = Number(serviceAreaCenterLat);
+        if (!Number.isFinite(parsed)) {
+          return res.status(400).json({
+            error: "serviceAreaCenterLat must be a valid number",
+          });
+        }
+        updates.serviceAreaCenterLat = parsed;
+      }
+    }
+
+    if ("serviceAreaCenterLng" in req.body) {
+      if (serviceAreaCenterLng == null || serviceAreaCenterLng === "") {
+        updates.serviceAreaCenterLng = null;
+      } else {
+        const parsed = Number(serviceAreaCenterLng);
+        if (!Number.isFinite(parsed)) {
+          return res.status(400).json({
+            error: "serviceAreaCenterLng must be a valid number",
+          });
+        }
+        updates.serviceAreaCenterLng = parsed;
+      }
+    }
+
+    if ("serviceAreaRadiusMeters" in req.body) {
+      if (serviceAreaRadiusMeters == null || serviceAreaRadiusMeters === "") {
+        updates.serviceAreaRadiusMeters = null;
+      } else {
+        const parsed = Number(serviceAreaRadiusMeters);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          return res.status(400).json({
+            error: "serviceAreaRadiusMeters must be a valid number",
+          });
+        }
+        updates.serviceAreaRadiusMeters = parsed;
+      }
+    }
+
     if ("bannerEnabled" in req.body) {
       if (typeof bannerEnabled !== "boolean") {
         return res.status(400).json({
@@ -238,6 +318,10 @@ router.patch("/admin/storefront", async (req, res) => {
       !("platformFee" in req.body) &&
       !("rtcSectionImage" in req.body) &&
       !("dessertSectionImage" in req.body) &&
+      !("serviceAreaPolygon" in req.body) &&
+      !("serviceAreaCenterLat" in req.body) &&
+      !("serviceAreaCenterLng" in req.body) &&
+      !("serviceAreaRadiusMeters" in req.body) &&
       !("bannerEnabled" in req.body) &&
       !("bannerTitle" in req.body) &&
       !("bannerMessage" in req.body) &&
@@ -271,6 +355,12 @@ router.patch("/admin/storefront", async (req, res) => {
         dessertSectionImage:
           settings.dessertSectionImage?.trim() ||
           DEFAULT_DESSERT_SECTION_IMAGE,
+        serviceAreaPolygon: Array.isArray(settings.serviceAreaPolygon)
+          ? settings.serviceAreaPolygon
+          : [],
+        serviceAreaCenterLat: settings.serviceAreaCenterLat ?? null,
+        serviceAreaCenterLng: settings.serviceAreaCenterLng ?? null,
+        serviceAreaRadiusMeters: settings.serviceAreaRadiusMeters ?? null,
         bannerEnabled: settings.bannerEnabled ?? false,
         bannerTitle: settings.bannerTitle ?? "",
         bannerMessage: settings.bannerMessage ?? "",
