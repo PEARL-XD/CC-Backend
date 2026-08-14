@@ -124,10 +124,117 @@ function shouldShowPriceNotice(user) {
   return createdAt >= PRICE_NOTICE_LAUNCH_AT;
 }
 
+function hasMeaningfulLocation(location = {}) {
+  return [
+    location.latitude,
+    location.longitude,
+    location.addressLine,
+    location.addressLabel,
+    location.placeName,
+    location.street,
+    location.subLocality,
+    location.locality,
+    location.administrativeArea,
+    location.postalCode,
+    location.tower,
+    location.floor,
+    location.flat,
+  ].some((value) => {
+    if (value === undefined || value === null) return false;
+    return String(value).trim().length > 0;
+  });
+}
+
+function normalizeLocationRecord(location = {}) {
+  if (!location || typeof location !== "object") return {};
+
+  return {
+    locationKey: buildLocationKey(location),
+    latitude: normalizeOptionalNumber(location.latitude),
+    longitude: normalizeOptionalNumber(location.longitude),
+    addressLine: normalizeText(location.addressLine),
+    addressLabel: normalizeText(location.addressLabel),
+    placeName: normalizeText(location.placeName),
+    street: normalizeText(location.street),
+    subLocality: normalizeText(location.subLocality),
+    locality: normalizeText(location.locality),
+    administrativeArea: normalizeText(location.administrativeArea),
+    postalCode: normalizeText(location.postalCode),
+    tower: normalizeText(location.tower),
+    floor: normalizeText(location.floor),
+    flat: normalizeText(location.flat),
+    serviceable: location.serviceable === true,
+    serviceabilityMethod: normalizeText(location.serviceabilityMethod),
+    serviceabilityMessage: normalizeText(location.serviceabilityMessage),
+    checkedAt: location.checkedAt ? new Date(location.checkedAt) : null,
+  };
+}
+
+function buildLocationKey(location = {}) {
+  const explicitKey = normalizeText(location.locationKey);
+  if (explicitKey) return explicitKey.toLowerCase();
+
+  return [
+    normalizeText(location.addressLabel).toLowerCase(),
+    normalizeText(location.addressLine).toLowerCase(),
+    normalizeText(location.tower).toLowerCase(),
+    normalizeText(location.floor).toLowerCase(),
+    normalizeText(location.flat).toLowerCase(),
+    Number.isFinite(location.latitude) ? location.latitude.toFixed(6) : "",
+    Number.isFinite(location.longitude) ? location.longitude.toFixed(6) : "",
+  ].join("|");
+}
+
+function mergeSavedLocations(existingLocations = [], nextLocation = null) {
+  const locations = [];
+  const seen = new Set();
+
+  for (const rawLocation of existingLocations) {
+    const location = normalizeLocationRecord(rawLocation);
+    if (!hasMeaningfulLocation(location)) continue;
+
+    const key = buildLocationKey(location);
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    locations.push(location);
+  }
+
+  if (nextLocation) {
+    const location = normalizeLocationRecord(nextLocation);
+    if (hasMeaningfulLocation(location)) {
+      const key = buildLocationKey(location);
+      const filtered = locations.filter((item) => buildLocationKey(item) !== key);
+      filtered.unshift(location);
+      return filtered;
+    }
+  }
+
+  return locations;
+}
+
+function buildSavedLocationRecord(location = {}, serviceability = null) {
+  const normalizedLocation = normalizeLocationRecord(location);
+  normalizedLocation.locationKey = buildLocationKey(normalizedLocation);
+  return {
+    ...normalizedLocation,
+    serviceable: serviceability?.serviceable ?? location.serviceable ?? false,
+    serviceabilityMethod: serviceability?.method ?? location.serviceabilityMethod ?? "",
+    serviceabilityMessage:
+      serviceability?.message ?? location.serviceabilityMessage ?? "",
+    checkedAt: new Date(),
+  };
+}
+
 function buildClientUser(user) {
   const plainUser = user?.toObject ? user.toObject() : { ...user };
+  const savedLocations = mergeSavedLocations(
+    Array.isArray(plainUser.savedLocations) ? plainUser.savedLocations : [],
+    plainUser.deliveryLocation,
+  );
   return {
     ...plainUser,
+    savedLocations,
     showPriceNotice: shouldShowPriceNotice(plainUser),
   };
 }
@@ -148,6 +255,7 @@ function buildDeliveryLocationFromBody(body = {}) {
   const longitude = normalizeOptionalNumber(body.longitude);
 
   return {
+    locationKey: normalizeOptionalText(body.locationKey),
     latitude,
     longitude,
     addressLine: normalizeOptionalText(body.addressLine),
@@ -434,6 +542,15 @@ router.post("/register", authLimiter, async (req, res) => {
           society,
         })
       : { serviceable: true, method: "none", message: "" };
+    const savedLocationRecord = hasDeliveryLocation(deliveryLocation)
+      ? buildSavedLocationRecord(
+          {
+            ...deliveryLocation,
+            society,
+          },
+          serviceability,
+        )
+      : null;
 
     const user = new User({
       name,
@@ -453,6 +570,7 @@ router.post("/register", authLimiter, async (req, res) => {
               serviceabilityMessage: serviceability.message,
               checkedAt: new Date(),
             },
+            savedLocations: savedLocationRecord ? [savedLocationRecord] : [],
           }
         : {}),
     });
@@ -471,7 +589,9 @@ router.post("/register", authLimiter, async (req, res) => {
         floor: user.floor,
         flat: user.flat,
         deliveryLocation: user.deliveryLocation,
+        savedLocations: user.savedLocations,
         serviceability,
+        showPriceNotice: shouldShowPriceNotice(user),
       },
     });
   } catch (error) {
@@ -575,6 +695,7 @@ router.post("/login", authLimiter, async (req, res) => {
         floor: user.floor,
         flat: user.flat,
         deliveryLocation: user.deliveryLocation,
+        savedLocations: user.savedLocations || [],
         createdAt: user.createdAt,
         priceNoticeSeenAt: user.priceNoticeSeenAt,
         showPriceNotice: shouldShowPriceNotice(user),
@@ -675,6 +796,7 @@ router.delete("/account", authenticateToken, async (req, res) => {
 router.patch("/users/profile", authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
+    const currentUser = await User.findById(userId).select("savedLocations");
 
     const name = normalizeText(req.body.name);
     const email = normalizeEmail(req.body.email);
@@ -770,6 +892,14 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
     if (flat !== undefined) updates.flat = flat;
     if (avatarStyle !== undefined) updates.avatarStyle = avatarStyle;
     if (deliveryLocation) {
+      const savedLocationRecord = buildSavedLocationRecord(
+        {
+          ...deliveryLocation,
+          society: society ?? req.body.location?.society ?? req.body.society ?? "",
+        },
+        serviceability,
+      );
+
       updates.deliveryLocation = {
         ...deliveryLocation,
         serviceable: serviceability?.serviceable ?? false,
@@ -777,6 +907,10 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
         serviceabilityMessage: serviceability?.message ?? "",
         checkedAt: new Date(),
       };
+      updates.savedLocations = mergeSavedLocations(
+        currentUser?.savedLocations || [],
+        savedLocationRecord,
+      );
     }
 
     const user = await User.findByIdAndUpdate(userId, updates, {
@@ -790,7 +924,7 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
 
     return res.json({
       message: "Profile updated successfully.",
-      user,
+      user: buildClientUser(user),
     });
   } catch (error) {
     console.error("Profile update error:", error);
@@ -804,7 +938,9 @@ router.patch("/users/profile", authenticateToken, async (req, res) => {
 router.patch("/users/location", authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
+    const currentUser = await User.findById(userId).select("savedLocations");
     const location = buildDeliveryLocationFromBody(req.body);
+    const locationKey = buildLocationKey(location);
 
     if (!hasDeliveryLocation(location)) {
       return res.status(400).json({ error: "Location data is required." });
@@ -833,8 +969,20 @@ router.patch("/users/location", authenticateToken, async (req, res) => {
     const user = await User.findByIdAndUpdate(
       userId,
       {
+        savedLocations: mergeSavedLocations(
+          currentUser?.savedLocations || [],
+          buildSavedLocationRecord(
+            {
+              ...location,
+              locationKey,
+              society: societyUpdate,
+            },
+            serviceability,
+          ),
+        ),
         deliveryLocation: {
           ...location,
+          locationKey,
           serviceable: serviceability.serviceable,
           serviceabilityMethod: serviceability.method,
           serviceabilityMessage: serviceability.message,
@@ -869,6 +1017,60 @@ router.patch("/users/location", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Location save error:", error);
     return res.status(500).json({ error: "Could not save location." });
+  }
+});
+
+// DELETE /users/location
+router.delete("/users/location", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const targetLocationKey = normalizeText(req.body?.locationKey);
+
+    if (!targetLocationKey) {
+      return res.status(400).json({ error: "Location key is required." });
+    }
+
+    const currentUser = await User.findById(userId).select(
+      "savedLocations deliveryLocation",
+    );
+    const savedLocations = Array.isArray(currentUser?.savedLocations)
+      ? currentUser.savedLocations.map((item) => normalizeLocationRecord(item))
+      : [];
+    const remainingSavedLocations = savedLocations.filter(
+      (item) => buildLocationKey(item) !== targetLocationKey.toLowerCase(),
+    );
+
+    const isCurrentDeliveryLocation =
+      buildLocationKey(currentUser?.deliveryLocation || {}) ===
+      targetLocationKey.toLowerCase();
+
+    const nextDeliveryLocation = isCurrentDeliveryLocation
+      ? remainingSavedLocations[0] || {}
+      : currentUser?.deliveryLocation || {};
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        savedLocations: remainingSavedLocations,
+        deliveryLocation: nextDeliveryLocation,
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    ).select(sanitizeUserQuery());
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    return res.json({
+      success: true,
+      user: buildClientUser(user),
+    });
+  } catch (error) {
+    console.error("Location delete error:", error);
+    return res.status(500).json({ error: "Could not delete location." });
   }
 });
 
