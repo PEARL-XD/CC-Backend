@@ -176,7 +176,15 @@ const getLocationBlockReason = (location = {}) => {
     return null;
   }
 
-  if (location.serviceable !== false) {
+  const hasGpsCoordinates =
+    Number.isFinite(Number(location.latitude)) &&
+    Number.isFinite(Number(location.longitude));
+
+  if (!hasGpsCoordinates) {
+    return null;
+  }
+
+  if (location.serviceable === true) {
     return null;
   }
 
