@@ -213,6 +213,41 @@ function mergeSavedLocations(existingLocations = [], nextLocation = null) {
   return locations;
 }
 
+function hasLegacyAddressFields(user = {}) {
+  return [user.tower, user.floor, user.flat, user.society].some((value) => {
+    if (value === undefined || value === null) return false;
+    return String(value).trim().length > 0;
+  });
+}
+
+function buildLegacyDeliveryLocation(user = {}) {
+  if (!hasLegacyAddressFields(user)) {
+    return null;
+  }
+
+  const society = normalizeText(user.society);
+  const tower = normalizeText(user.tower);
+  const floor = normalizeText(user.floor);
+  const flat = normalizeText(user.flat);
+
+  const addressLine = [society, tower, floor, flat].filter(Boolean).join(", ");
+  const addressLabel = society || tower || flat || "Home";
+
+  return normalizeLocationRecord({
+    locationKey: `legacy:${normalizeText(user._id || user.id || user.phone)}`,
+    addressLine,
+    addressLabel,
+    placeName: society,
+    tower,
+    floor,
+    flat,
+    serviceable: true,
+    serviceabilityMethod: "legacy",
+    serviceabilityMessage: "",
+    checkedAt: user.updatedAt || user.createdAt || null,
+  });
+}
+
 function buildSavedLocationRecord(location = {}, serviceability = null) {
   const normalizedLocation = normalizeLocationRecord(location);
   normalizedLocation.locationKey = buildLocationKey(normalizedLocation);
@@ -228,12 +263,21 @@ function buildSavedLocationRecord(location = {}, serviceability = null) {
 
 function buildClientUser(user) {
   const plainUser = user?.toObject ? user.toObject() : { ...user };
+  delete plainUser.passwordHash;
+  delete plainUser.__v;
+
+  const legacyDeliveryLocation = buildLegacyDeliveryLocation(plainUser);
+  const deliveryLocation = hasMeaningfulLocation(plainUser.deliveryLocation)
+    ? normalizeLocationRecord(plainUser.deliveryLocation)
+    : legacyDeliveryLocation;
+
   const savedLocations = mergeSavedLocations(
     Array.isArray(plainUser.savedLocations) ? plainUser.savedLocations : [],
-    plainUser.deliveryLocation,
+    deliveryLocation,
   );
   return {
     ...plainUser,
+    deliveryLocation,
     savedLocations,
     showPriceNotice: shouldShowPriceNotice(plainUser),
   };
@@ -492,15 +536,7 @@ router.post("/register", authLimiter, async (req, res) => {
     const requestedSociety = normalizeText(req.body.society);
     const society = requestedSociety || deriveSocietyFromLocation(deliveryLocation);
 
-    if (
-      !name ||
-      !email ||
-      !phone ||
-      !password ||
-      !tower ||
-      !flat ||
-      (!requestedSociety && !hasDeliveryLocation(deliveryLocation))
-    ) {
+    if (!name || !email || !phone || !password) {
       return res.status(400).json({ error: "All fields are required." });
     }
 
@@ -579,20 +615,8 @@ router.post("/register", authLimiter, async (req, res) => {
 
     return res.status(201).json({
       message: "User registered successfully.",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        society: user.society,
-        tower: user.tower,
-        floor: user.floor,
-        flat: user.flat,
-        deliveryLocation: user.deliveryLocation,
-        savedLocations: user.savedLocations,
-        serviceability,
-        showPriceNotice: shouldShowPriceNotice(user),
-      },
+      user: buildClientUser(user),
+      serviceability,
     });
   } catch (error) {
     console.error("Registration error:", error);
@@ -685,21 +709,7 @@ router.post("/login", authLimiter, async (req, res) => {
     return res.status(200).json({
       message: "Login successful.",
       accessToken,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        society: user.society,
-        tower: user.tower,
-        floor: user.floor,
-        flat: user.flat,
-        deliveryLocation: user.deliveryLocation,
-        savedLocations: user.savedLocations || [],
-        createdAt: user.createdAt,
-        priceNoticeSeenAt: user.priceNoticeSeenAt,
-        showPriceNotice: shouldShowPriceNotice(user),
-      },
+      user: buildClientUser(user),
     });
   } catch (error) {
     console.error("Login error:", error);

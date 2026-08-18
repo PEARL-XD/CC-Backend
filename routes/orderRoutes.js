@@ -92,6 +92,43 @@ const logOrderSummary = (label, order) => {
   });
 };
 
+const hasLegacyAddressFields = (user = {}) =>
+  [user.tower, user.floor, user.flat, user.society].some((value) =>
+    String(value ?? "").trim().length > 0,
+  );
+
+const buildLegacyDeliveryLocation = (user = {}) => {
+  if (!hasLegacyAddressFields(user)) {
+    return null;
+  }
+
+  const society = String(user.society ?? "").trim();
+  const tower = String(user.tower ?? "").trim();
+  const floor = String(user.floor ?? "").trim();
+  const flat = String(user.flat ?? "").trim();
+
+  return {
+    locationKey: `legacy:${String(user._id ?? user.id ?? user.phone ?? "")}`,
+    latitude: null,
+    longitude: null,
+    addressLine: [society, tower, floor, flat].filter(Boolean).join(", "),
+    addressLabel: society || tower || flat || "Home",
+    placeName: society,
+    street: "",
+    subLocality: "",
+    locality: "",
+    administrativeArea: "",
+    postalCode: "",
+    tower,
+    floor,
+    flat,
+    serviceable: true,
+    serviceabilityMethod: "legacy",
+    serviceabilityMessage: "",
+    checkedAt: user.updatedAt || user.createdAt || null,
+  };
+};
+
 const getIstMinutesNow = (date = new Date()) => {
   const istDate = new Date(date.getTime() + IST_OFFSET_MS);
   return istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
@@ -516,12 +553,23 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     const scheduleText = String(schedule || "").trim();
 
     const currentUser = await User.findById(req.user.id)
-      .select("deliveryLocation")
+      .select("deliveryLocation tower floor flat society")
       .lean();
 
-    const locationBlockReason = getLocationBlockReason(
-      currentUser?.deliveryLocation || {},
-    );
+    const resolvedLocation =
+      currentUser?.deliveryLocation &&
+      hasMeaningfulLocation(currentUser.deliveryLocation)
+        ? currentUser.deliveryLocation
+        : buildLegacyDeliveryLocation(currentUser || {});
+
+    if (!resolvedLocation) {
+      return res.status(400).json({
+        error: "Please select your delivery location before checkout.",
+        code: "LOCATION_REQUIRED",
+      });
+    }
+
+    const locationBlockReason = getLocationBlockReason(resolvedLocation);
 
     if (locationBlockReason) {
       return res.status(403).json({

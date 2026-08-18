@@ -32,10 +32,10 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true },
     phone: { type: String, required: true, unique: true },
     passwordHash: { type: String, required: true },
-    tower: { type: String, required: true },
+    tower: { type: String, default: "" },
     floor: { type: String, default: "" },
-    flat: { type: String, required: true },
-    society: { type: String, required: true },
+    flat: { type: String, default: "" },
+    society: { type: String, default: "" },
     deliveryLocation: {
       locationKey: { type: String, default: "" },
       latitude: { type: Number, default: null },
