@@ -208,6 +208,37 @@ const hasMeaningfulLocation = (location = {}) => {
   });
 };
 
+const hasGpsCoordinates = (location = {}) =>
+{
+  const latitude = location.latitude;
+  const longitude = location.longitude;
+
+  if (latitude === undefined || latitude === null || String(latitude).trim() === "") {
+    return false;
+  }
+
+  if (longitude === undefined || longitude === null || String(longitude).trim() === "") {
+    return false;
+  }
+
+  return Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
+};
+
+const resolveOrderDeliveryLocation = (user = {}) => {
+  const explicitDeliveryLocation = hasMeaningfulLocation(user.deliveryLocation)
+    ? {
+        ...user.deliveryLocation,
+      }
+    : null;
+  const legacyDeliveryLocation = buildLegacyDeliveryLocation(user);
+
+  if (explicitDeliveryLocation && hasGpsCoordinates(explicitDeliveryLocation)) {
+    return explicitDeliveryLocation;
+  }
+
+  return legacyDeliveryLocation || explicitDeliveryLocation;
+};
+
 const getLocationBlockReason = (location = {}) => {
   if (!hasMeaningfulLocation(location)) {
     return null;
@@ -556,11 +587,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       .select("deliveryLocation tower floor flat society")
       .lean();
 
-    const resolvedLocation =
-      currentUser?.deliveryLocation &&
-      hasMeaningfulLocation(currentUser.deliveryLocation)
-        ? currentUser.deliveryLocation
-        : buildLegacyDeliveryLocation(currentUser || {});
+    const resolvedLocation = resolveOrderDeliveryLocation(currentUser || {});
 
     if (!resolvedLocation) {
       return res.status(400).json({

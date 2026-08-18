@@ -145,6 +145,23 @@ function hasMeaningfulLocation(location = {}) {
   });
 }
 
+function hasGpsCoordinates(location = {}) {
+  const latitude = location.latitude;
+  const longitude = location.longitude;
+
+  if (latitude === undefined || latitude === null || String(latitude).trim() === "") {
+    return false;
+  }
+
+  if (longitude === undefined || longitude === null || String(longitude).trim() === "") {
+    return false;
+  }
+
+  return (
+    Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude))
+  );
+}
+
 function normalizeLocationRecord(location = {}) {
   if (!location || typeof location !== "object") return {};
 
@@ -268,9 +285,13 @@ function buildClientUser(user) {
   delete plainUser.__v;
 
   const legacyDeliveryLocation = buildLegacyDeliveryLocation(plainUser);
-  const deliveryLocation = hasMeaningfulLocation(plainUser.deliveryLocation)
+  const explicitDeliveryLocation = hasMeaningfulLocation(plainUser.deliveryLocation)
     ? normalizeLocationRecord(plainUser.deliveryLocation)
-    : legacyDeliveryLocation;
+    : null;
+  const deliveryLocation =
+    explicitDeliveryLocation && hasGpsCoordinates(explicitDeliveryLocation)
+      ? explicitDeliveryLocation
+      : legacyDeliveryLocation || explicitDeliveryLocation;
 
   const savedLocations = mergeSavedLocations(
     Array.isArray(plainUser.savedLocations) ? plainUser.savedLocations : [],
