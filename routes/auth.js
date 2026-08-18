@@ -84,7 +84,7 @@ function normalizeEmail(email) {
 }
 
 function normalizeText(value) {
-  return value?.trim() ?? "";
+  return String(value ?? "").trim();
 }
 
 function normalizePhone(value) {
@@ -229,12 +229,13 @@ function buildLegacyDeliveryLocation(user = {}) {
   const tower = normalizeText(user.tower);
   const floor = normalizeText(user.floor);
   const flat = normalizeText(user.flat);
+  const legacyUserKey = String(user._id ?? user.id ?? user.phone ?? "");
 
   const addressLine = [society, tower, floor, flat].filter(Boolean).join(", ");
   const addressLabel = society || tower || flat || "Home";
 
   return normalizeLocationRecord({
-    locationKey: `legacy:${normalizeText(user._id || user.id || user.phone)}`,
+    locationKey: `legacy:${legacyUserKey}`,
     addressLine,
     addressLabel,
     placeName: society,
