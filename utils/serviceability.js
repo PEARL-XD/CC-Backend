@@ -4,6 +4,45 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
+function isPointLike(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    ("latitude" in value || "longitude" in value)
+  );
+}
+
+function normalizePoint(point) {
+  const latitude = Number(point?.latitude);
+  const longitude = Number(point?.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
+
+function normalizePolygon(points) {
+  if (!Array.isArray(points)) return [];
+
+  return points.map(normalizePoint).filter(Boolean);
+}
+
+function normalizePolygons(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+
+  if (raw.every(isPointLike)) {
+    const polygon = normalizePolygon(raw);
+    return polygon.length >= 3 ? [polygon] : [];
+  }
+
+  return raw
+    .map((entry) => normalizePolygon(Array.isArray(entry) ? entry : []))
+    .filter((polygon) => polygon.length >= 3);
+}
+
 function pointInPolygon(point, polygon) {
   if (!point || !Array.isArray(polygon) || polygon.length < 3) return false;
 
@@ -79,11 +118,15 @@ export function evaluateServiceability(location = {}, settings = {}) {
   const normalizedSubLocality = normalizeText(location.subLocality);
   const normalizedAddress = normalizeText(location.addressLine);
 
-  const polygon = Array.isArray(settings.serviceAreaPolygon)
-    ? settings.serviceAreaPolygon
-    : [];
-  if (polygon.length >= 3) {
-    const serviceable = pointInPolygon(point, polygon);
+  const polygons = normalizePolygons(settings.serviceAreaPolygons);
+  const legacyPolygons = polygons.length
+    ? polygons
+    : normalizePolygons(settings.serviceAreaPolygon);
+
+  if (legacyPolygons.length > 0) {
+    const serviceable = legacyPolygons.some((polygon) =>
+      pointInPolygon(point, polygon),
+    );
     return {
       serviceable,
       method: "polygon",
@@ -141,4 +184,3 @@ export function evaluateServiceability(location = {}, settings = {}) {
       : "Sorry, we do not currently deliver to this location.",
   };
 }
-

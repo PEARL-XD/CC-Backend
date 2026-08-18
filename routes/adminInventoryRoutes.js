@@ -15,6 +15,42 @@ const DEFAULT_RTC_SECTION_IMAGE =
 const DEFAULT_DESSERT_SECTION_IMAGE =
   "https://storage.googleapis.com/cccooked/banners/desert.png";
 
+function isPointLike(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    ("latitude" in value || "longitude" in value)
+  );
+}
+
+function normalizeServiceAreaPoint(point) {
+  const latitude = Number(point?.latitude);
+  const longitude = Number(point?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+  return { latitude, longitude };
+}
+
+function normalizeServiceAreaPolygon(points) {
+  if (!Array.isArray(points)) return [];
+  return points.map(normalizeServiceAreaPoint).filter(Boolean);
+}
+
+function normalizeServiceAreaPolygons(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+
+  if (raw.every(isPointLike)) {
+    const polygon = normalizeServiceAreaPolygon(raw);
+    return polygon.length >= 3 ? [polygon] : [];
+  }
+
+  return raw
+    .map((entry) => normalizeServiceAreaPolygon(Array.isArray(entry) ? entry : []))
+    .filter((polygon) => polygon.length >= 3);
+}
+
 const isAdmin = async (req) => {
   const user = await User.findById(req.user.id).select("role").lean();
   return user?.role === "admin";
@@ -47,6 +83,7 @@ async function getOrCreateStorefrontSettings() {
         rtcSectionImage: DEFAULT_RTC_SECTION_IMAGE,
         dessertSectionImage: DEFAULT_DESSERT_SECTION_IMAGE,
         serviceAreaPolygon: [],
+        serviceAreaPolygons: [],
         serviceAreaCenterLat: null,
         serviceAreaCenterLng: null,
         serviceAreaRadiusMeters: null,
@@ -54,6 +91,7 @@ async function getOrCreateStorefrontSettings() {
         bannerTitle: "",
         bannerMessage: "",
         bannerTone: "info",
+        serviceAreaPolygons: [],
       },
     },
     { upsert: true, new: true }
@@ -89,6 +127,9 @@ router.get("/admin/inventory", async (req, res) => {
         serviceAreaPolygon: Array.isArray(settings?.serviceAreaPolygon)
           ? settings.serviceAreaPolygon
           : [],
+        serviceAreaPolygons: Array.isArray(settings?.serviceAreaPolygons)
+          ? settings.serviceAreaPolygons
+          : [],
         serviceAreaCenterLat: settings?.serviceAreaCenterLat ?? null,
         serviceAreaCenterLng: settings?.serviceAreaCenterLng ?? null,
         serviceAreaRadiusMeters: settings?.serviceAreaRadiusMeters ?? null,
@@ -116,6 +157,7 @@ router.patch("/admin/storefront", async (req, res) => {
     const rtcSectionImage = req.body.rtcSectionImage;
     const dessertSectionImage = req.body.dessertSectionImage;
     const serviceAreaPolygon = req.body.serviceAreaPolygon;
+    const serviceAreaPolygons = req.body.serviceAreaPolygons;
     const serviceAreaCenterLat = req.body.serviceAreaCenterLat;
     const serviceAreaCenterLng = req.body.serviceAreaCenterLng;
     const serviceAreaRadiusMeters = req.body.serviceAreaRadiusMeters;
@@ -200,26 +242,52 @@ router.patch("/admin/storefront", async (req, res) => {
     }
 
     if ("serviceAreaPolygon" in req.body) {
-      if (serviceAreaPolygon == null) {
+      if (
+        serviceAreaPolygon == null ||
+        (Array.isArray(serviceAreaPolygon) && serviceAreaPolygon.length === 0)
+      ) {
         updates.serviceAreaPolygon = [];
       } else if (!Array.isArray(serviceAreaPolygon)) {
         return res.status(400).json({
           error: "serviceAreaPolygon must be an array",
         });
       } else {
-        const normalizedPolygon = [];
-        for (const point of serviceAreaPolygon) {
-          const latitude = Number(point?.latitude);
-          const longitude = Number(point?.longitude);
-          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-            return res.status(400).json({
-              error: "serviceAreaPolygon points must include valid latitude and longitude",
-            });
-          }
-          normalizedPolygon.push({ latitude, longitude });
+        const normalizedPolygon = normalizeServiceAreaPolygon(serviceAreaPolygon);
+        if (normalizedPolygon.length < 3) {
+          return res.status(400).json({
+            error:
+              "serviceAreaPolygon must contain at least 3 valid latitude/longitude points",
+          });
+        }
+        updates.serviceAreaPolygon = normalizedPolygon;
+      }
+    }
+
+    if ("serviceAreaPolygons" in req.body) {
+      if (
+        serviceAreaPolygons == null ||
+        (Array.isArray(serviceAreaPolygons) && serviceAreaPolygons.length === 0)
+      ) {
+        updates.serviceAreaPolygons = [];
+        updates.serviceAreaPolygon = [];
+      } else if (!Array.isArray(serviceAreaPolygons)) {
+        return res.status(400).json({
+          error: "serviceAreaPolygons must be an array",
+        });
+      } else {
+        const normalizedPolygons = normalizeServiceAreaPolygons(
+          serviceAreaPolygons,
+        );
+
+        if (normalizedPolygons.length === 0) {
+          return res.status(400).json({
+            error:
+              "serviceAreaPolygons must contain one or more polygons with at least 3 points each",
+          });
         }
 
-        updates.serviceAreaPolygon = normalizedPolygon;
+        updates.serviceAreaPolygons = normalizedPolygons;
+        updates.serviceAreaPolygon = normalizedPolygons[0];
       }
     }
 
@@ -319,6 +387,7 @@ router.patch("/admin/storefront", async (req, res) => {
       !("rtcSectionImage" in req.body) &&
       !("dessertSectionImage" in req.body) &&
       !("serviceAreaPolygon" in req.body) &&
+      !("serviceAreaPolygons" in req.body) &&
       !("serviceAreaCenterLat" in req.body) &&
       !("serviceAreaCenterLng" in req.body) &&
       !("serviceAreaRadiusMeters" in req.body) &&
@@ -357,6 +426,9 @@ router.patch("/admin/storefront", async (req, res) => {
           DEFAULT_DESSERT_SECTION_IMAGE,
         serviceAreaPolygon: Array.isArray(settings.serviceAreaPolygon)
           ? settings.serviceAreaPolygon
+          : [],
+        serviceAreaPolygons: Array.isArray(settings.serviceAreaPolygons)
+          ? settings.serviceAreaPolygons
           : [],
         serviceAreaCenterLat: settings.serviceAreaCenterLat ?? null,
         serviceAreaCenterLng: settings.serviceAreaCenterLng ?? null,

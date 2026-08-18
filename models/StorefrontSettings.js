@@ -4,6 +4,13 @@ const DEFAULT_RTC_SECTION_IMAGE =
   "https://storage.googleapis.com/cccooked/banners/ready%20to%20cook.png";
 const DEFAULT_DESSERT_SECTION_IMAGE =
   "https://storage.googleapis.com/cccooked/banners/desert.png";
+const serviceAreaPointSchema = new mongoose.Schema(
+  {
+    latitude: { type: Number, required: true },
+    longitude: { type: Number, required: true },
+  },
+  { _id: false },
+);
 
 const storefrontSettingsSchema = new mongoose.Schema(
   {
@@ -19,12 +26,11 @@ const storefrontSettingsSchema = new mongoose.Schema(
     serviceableSocieties: { type: [String], default: [] },
     serviceableLocalities: { type: [String], default: [] },
     serviceAreaPolygon: {
-      type: [
-        {
-          latitude: { type: Number, required: true },
-          longitude: { type: Number, required: true },
-        },
-      ],
+      type: [serviceAreaPointSchema],
+      default: [],
+    },
+    serviceAreaPolygons: {
+      type: [[serviceAreaPointSchema]],
       default: [],
     },
     serviceAreaCenterLat: { type: Number, default: null },

@@ -19,7 +19,51 @@ const DEFAULT_SERVICEABLE_LOCALITIES = [
 const CACHE_TTL_MS = 30 * 1000;
 let cache = null;
 
+function isPointLike(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    ("latitude" in value || "longitude" in value)
+  );
+}
+
+function normalizePoint(point) {
+  const latitude = Number(point?.latitude);
+  const longitude = Number(point?.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
+
+function normalizePolygon(points) {
+  if (!Array.isArray(points)) return [];
+
+  return points.map(normalizePoint).filter(Boolean);
+}
+
+function normalizePolygons(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+
+  if (raw.every(isPointLike)) {
+    const polygon = normalizePolygon(raw);
+    return polygon.length >= 3 ? [polygon] : [];
+  }
+
+  return raw
+    .map((entry) => normalizePolygon(Array.isArray(entry) ? entry : []))
+    .filter((polygon) => polygon.length >= 3);
+}
+
 function buildSettings(settings = {}) {
+  const serviceAreaPolygons = normalizePolygons(settings?.serviceAreaPolygons);
+  const legacyServiceAreaPolygon = serviceAreaPolygons.length
+    ? serviceAreaPolygons[0]
+    : normalizePolygons(settings?.serviceAreaPolygon)[0] || [];
+
   return {
     cookedEnabled: settings?.cookedEnabled ?? true,
     readyToEatEnabled: settings?.readyToEatEnabled ?? true,
@@ -41,17 +85,8 @@ function buildSettings(settings = {}) {
           .map((value) => String(value || "").trim())
           .filter(Boolean)
       : DEFAULT_SERVICEABLE_LOCALITIES,
-    serviceAreaPolygon: Array.isArray(settings?.serviceAreaPolygon)
-      ? settings.serviceAreaPolygon
-          .map((point) => ({
-            latitude: Number(point?.latitude),
-            longitude: Number(point?.longitude),
-          }))
-          .filter(
-            (point) =>
-              Number.isFinite(point.latitude) && Number.isFinite(point.longitude),
-          )
-      : [],
+    serviceAreaPolygon: legacyServiceAreaPolygon,
+    serviceAreaPolygons,
     serviceAreaCenterLat:
       Number.isFinite(Number(settings?.serviceAreaCenterLat))
         ? Number(settings.serviceAreaCenterLat)

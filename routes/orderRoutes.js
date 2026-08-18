@@ -144,6 +144,48 @@ const validateTwoTimeSchedule = (scheduleText) => {
   };
 };
 
+const hasMeaningfulLocation = (location = {}) => {
+  const fields = [
+    location.locationKey,
+    location.latitude,
+    location.longitude,
+    location.addressLine,
+    location.addressLabel,
+    location.placeName,
+    location.street,
+    location.subLocality,
+    location.locality,
+    location.administrativeArea,
+    location.postalCode,
+    location.tower,
+    location.floor,
+    location.flat,
+  ];
+
+  return fields.some((value) => {
+    if (typeof value === "number") {
+      return Number.isFinite(value);
+    }
+
+    return String(value ?? "").trim().length > 0;
+  });
+};
+
+const getLocationBlockReason = (location = {}) => {
+  if (!hasMeaningfulLocation(location)) {
+    return null;
+  }
+
+  if (location.serviceable !== false) {
+    return null;
+  }
+
+  return (
+    String(location.serviceabilityMessage || "").trim() ||
+    "Your selected location is currently outside our serviceable area."
+  );
+};
+
 const sendOrderStatusNotification = async (order, status) => {
   const config = ORDER_STATUS_MESSAGES[status];
   if (!config) return;
@@ -464,6 +506,21 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     const packagingFee = Number(settings?.packagingFee || 0);
     const platformFee = Number(settings?.platformFee || 0);
     const scheduleText = String(schedule || "").trim();
+
+    const currentUser = await User.findById(req.user.id)
+      .select("deliveryLocation")
+      .lean();
+
+    const locationBlockReason = getLocationBlockReason(
+      currentUser?.deliveryLocation || {},
+    );
+
+    if (locationBlockReason) {
+      return res.status(403).json({
+        error: locationBlockReason,
+        code: "LOCATION_NOT_SERVICEABLE",
+      });
+    }
 
     if (silentDelivery && paymentMethod === "COD") {
       return res.status(400).json({
