@@ -5,6 +5,8 @@ import rateLimit from "express-rate-limit";
 import { promisify } from "util";
 import crypto from "crypto";
 import { Resend } from "resend";
+import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { getAuth as getFirebaseAuth } from "firebase-admin/auth";
 
 import User from "../models/User.js";
 import RefreshToken from "../models/RefreshToken.js";
@@ -59,6 +61,24 @@ const avatarStyles = new Set(["neutral", "male", "female"]);
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
+
+function getFirebaseAdminApp() {
+  if (getApps().length) {
+    return getApps()[0];
+  }
+
+  return initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    }),
+  });
+}
+
+function getFirebaseAuthInstance() {
+  return getFirebaseAuth(getFirebaseAdminApp());
+}
 
 function buildTokenPayload(user) {
   return {
@@ -393,6 +413,59 @@ function sanitizeUserQuery() {
   return "-passwordHash -__v";
 }
 
+function buildSocialPlaceholderPhone(provider, providerUid) {
+  const seed = `${provider}:${providerUid}`;
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const digest = crypto
+      .createHash("sha256")
+      .update(`${seed}:${attempt}`)
+      .digest("hex");
+
+    let digits = Array.from(digest)
+      .map((char) => (char.charCodeAt(0) % 10).toString())
+      .join("")
+      .slice(0, 10);
+
+    if (digits.length < 10) {
+      digits = digits.padEnd(10, "0");
+    }
+
+    if (digits.startsWith("0")) {
+      digits = `9${digits.slice(1)}`;
+    }
+
+    return digits;
+  }
+
+  return `9${Math.floor(Math.random() * 1_000_000_000)
+    .toString()
+    .padStart(9, "0")}`;
+}
+
+async function issueAuthSession(res, user, statusCode = 200, message = "Login successful.") {
+  if (!process.env.ACCESS_TOKEN_SECRET || !process.env.REFRESH_TOKEN_SECRET) {
+    throw new Error("JWT secret keys are not set in environment variables.");
+  }
+
+  const accessToken = signAccessToken(user);
+  const refreshToken = signRefreshToken(user);
+
+  await RefreshToken.create({
+    userId: user._id,
+    token: refreshToken,
+    expiresAt: new Date(Date.now() + REFRESH_TOKEN_MAX_AGE_MS),
+  });
+
+  res.cookie("refreshToken", refreshToken, refreshCookieOptions);
+
+  return res.status(statusCode).json({
+    message,
+    accessToken,
+    user: buildClientUser(user),
+  });
+}
+
 function getRefreshTokenFromRequest(req) {
   return req.cookies?.refreshToken || req.body?.refreshToken;
 }
@@ -702,40 +775,101 @@ router.post("/login", authLimiter, async (req, res) => {
       userId: user._id.toString(),
       phoneNormalized: phone,
     });
-
-    if (!process.env.ACCESS_TOKEN_SECRET || !process.env.REFRESH_TOKEN_SECRET) {
-      throw new Error("JWT secret keys are not set in environment variables.");
-    }
-
-    const accessToken = signAccessToken(user);
-    const refreshToken = signRefreshToken(user);
-
-    await RefreshToken.create({
-      userId: user._id,
-      token: refreshToken,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_MAX_AGE_MS),
-    });
-
     console.log("JWT tokens created", {
       userId: user._id.toString(),
       accessTokenTtl: ACCESS_TOKEN_TTL,
       refreshTokenTtl: REFRESH_TOKEN_TTL,
     });
 
-    res.cookie("refreshToken", refreshToken, refreshCookieOptions);
     console.log("Login success", {
       userId: user._id.toString(),
       phoneNormalized: phone,
     });
 
-    return res.status(200).json({
-      message: "Login successful.",
-      accessToken,
-      user: buildClientUser(user),
-    });
+    return issueAuthSession(res, user, 200, "Login successful.");
   } catch (error) {
     console.error("Login error:", error);
     return res.status(500).json({ error: "Server error during login." });
+  }
+});
+
+// POST /social-login
+router.post("/social-login", authLimiter, async (req, res) => {
+  try {
+    const provider = normalizeText(req.body.provider).toLowerCase();
+    const idToken = normalizeText(req.body.idToken);
+
+    if (provider !== "google") {
+      return res.status(400).json({ error: "Unsupported social login provider." });
+    }
+
+    if (!idToken) {
+      return res.status(400).json({ error: "Identity token is required." });
+    }
+
+    const decoded = await getFirebaseAuthInstance().verifyIdToken(idToken);
+    const providerUid = normalizeText(decoded.uid);
+    const email = normalizeEmail(decoded.email || req.body.email);
+    const displayName = normalizeText(
+      decoded.name || req.body.name || decoded.email?.split("@")?.[0] || "CleanChops User",
+    );
+
+    if (!providerUid) {
+      return res.status(400).json({ error: "Invalid social identity token." });
+    }
+
+    if (!email) {
+      return res
+        .status(400)
+        .json({ error: "Google account email is required for sign in." });
+    }
+
+    let user = await User.findOne({
+      $or: [
+        { providerUid },
+        { email },
+      ],
+    });
+
+    const updates = {
+      name: displayName,
+      email,
+      providerUid,
+      authProvider: provider,
+    };
+
+    if (user) {
+      if (!normalizeText(user.providerUid)) {
+        user.providerUid = providerUid;
+      }
+      user.authProvider = provider;
+      user.name = displayName || user.name;
+      user.email = email || user.email;
+      if (!normalizeText(user.phone)) {
+        user.phone = buildSocialPlaceholderPhone(provider, providerUid);
+      }
+      await user.save();
+    } else {
+      const phone = buildSocialPlaceholderPhone(provider, providerUid);
+      user = new User({
+        ...updates,
+        phone,
+        passwordHash: await bcrypt.hash(crypto.randomUUID(), 10),
+      });
+      await user.save();
+    }
+
+    console.log("Social login success", {
+      provider,
+      providerUid,
+      userId: user._id.toString(),
+      email,
+    });
+
+    return issueAuthSession(res, user, 200, "Login successful.");
+  } catch (error) {
+    console.error("Social login error:", error);
+    return res.status(500).json({ error: "Server error during social login." });
   }
 });
 

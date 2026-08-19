@@ -81,6 +81,15 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    authProvider: {
+      type: String,
+      enum: ["phone", "google", "apple"],
+      default: "phone",
+    },
+    providerUid: {
+      type: String,
+      default: "",
+    },
     role: { type: String, enum: ["user", "admin"], default: "user" }, // ← add this
   },
   {
