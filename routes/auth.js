@@ -5,8 +5,6 @@ import rateLimit from "express-rate-limit";
 import { promisify } from "util";
 import crypto from "crypto";
 import { Resend } from "resend";
-import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getAuth as getFirebaseAuth } from "firebase-admin/auth";
 
 import User from "../models/User.js";
 import RefreshToken from "../models/RefreshToken.js";
@@ -61,24 +59,9 @@ const avatarStyles = new Set(["neutral", "male", "female"]);
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
-
-function getFirebaseAdminApp() {
-  if (getApps().length) {
-    return getApps()[0];
-  }
-
-  return initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    }),
-  });
-}
-
-function getFirebaseAuthInstance() {
-  return getFirebaseAuth(getFirebaseAdminApp());
-}
+const GOOGLE_WEB_CLIENT_ID =
+  process.env.GOOGLE_WEB_CLIENT_ID ||
+  "790301039130-082hd6s2vnh4rgoes6grl5fskq2bv80c.apps.googleusercontent.com";
 
 function buildTokenPayload(user) {
   return {
@@ -799,6 +782,13 @@ router.post("/social-login", authLimiter, async (req, res) => {
     const provider = normalizeText(req.body.provider).toLowerCase();
     const idToken = normalizeText(req.body.idToken);
 
+    console.log("Social login request received", {
+      provider,
+      hasToken: Boolean(idToken),
+      ip: req.ip,
+      userAgent: req.get("user-agent"),
+    });
+
     if (provider !== "google") {
       return res.status(400).json({ error: "Unsupported social login provider." });
     }
@@ -807,15 +797,39 @@ router.post("/social-login", authLimiter, async (req, res) => {
       return res.status(400).json({ error: "Identity token is required." });
     }
 
-    const decoded = await getFirebaseAuthInstance().verifyIdToken(idToken);
-    const providerUid = normalizeText(decoded.uid);
-    const email = normalizeEmail(decoded.email || req.body.email);
+    const tokenInfoRes = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`,
+    );
+
+    if (!tokenInfoRes.ok) {
+      const text = await tokenInfoRes.text().catch(() => "");
+      console.log("Google token verification failed", {
+        status: tokenInfoRes.status,
+        body: text,
+      });
+      return res.status(401).json({ error: "Invalid Google sign in token." });
+    }
+
+    const tokenInfo = await tokenInfoRes.json();
+    const providerUid = normalizeText(tokenInfo.sub);
+    const email = normalizeEmail(tokenInfo.email || req.body.email);
     const displayName = normalizeText(
-      decoded.name || req.body.name || decoded.email?.split("@")?.[0] || "CleanChops User",
+      req.body.name ||
+        tokenInfo.name ||
+        tokenInfo.email?.split("@")?.[0] ||
+        "CleanChops User",
     );
 
     if (!providerUid) {
       return res.status(400).json({ error: "Invalid social identity token." });
+    }
+
+    if (tokenInfo.aud && tokenInfo.aud !== GOOGLE_WEB_CLIENT_ID) {
+      console.log("Google token audience mismatch", {
+        aud: tokenInfo.aud,
+        expected: GOOGLE_WEB_CLIENT_ID,
+      });
+      return res.status(401).json({ error: "Google token audience mismatch." });
     }
 
     if (!email) {
