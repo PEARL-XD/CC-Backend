@@ -90,6 +90,10 @@ function normalizeText(value) {
   return String(value ?? "").trim();
 }
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function normalizePhone(value) {
   const digits = normalizeText(value).replace(/\D/g, "");
   if (!digits) return "";
@@ -397,33 +401,10 @@ function sanitizeUserQuery() {
 }
 
 function buildSocialPlaceholderPhone(provider, providerUid) {
-  const seed = `${provider}:${providerUid}`;
+  const normalizedProvider = normalizeText(provider).toLowerCase() || "social";
+  const normalizedUid = normalizeText(providerUid);
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const digest = crypto
-      .createHash("sha256")
-      .update(`${seed}:${attempt}`)
-      .digest("hex");
-
-    let digits = Array.from(digest)
-      .map((char) => (char.charCodeAt(0) % 10).toString())
-      .join("")
-      .slice(0, 10);
-
-    if (digits.length < 10) {
-      digits = digits.padEnd(10, "0");
-    }
-
-    if (digits.startsWith("0")) {
-      digits = `9${digits.slice(1)}`;
-    }
-
-    return digits;
-  }
-
-  return `9${Math.floor(Math.random() * 1_000_000_000)
-    .toString()
-    .padStart(9, "0")}`;
+  return `${normalizedProvider}:${normalizedUid}`;
 }
 
 async function issueAuthSession(res, user, statusCode = 200, message = "Login successful.") {
@@ -838,39 +819,52 @@ router.post("/social-login", authLimiter, async (req, res) => {
         .json({ error: "Google account email is required for sign in." });
     }
 
-    let user = await User.findOne({
-      $or: [
-        { providerUid },
-        { email },
-      ],
-    });
-
-    const updates = {
-      name: displayName,
-      email,
-      providerUid,
-      authProvider: provider,
-    };
+    let user = await User.findOne({ providerUid });
+    if (!user) {
+      user = await User.findOne({ email });
+    }
+    if (!user && email) {
+      user = await User.findOne({
+        email: new RegExp(`^${escapeRegex(email)}$`, "i"),
+      });
+    }
 
     if (user) {
-      if (!normalizeText(user.providerUid)) {
-        user.providerUid = providerUid;
+      const previousAuthProvider = normalizeText(user.authProvider).toLowerCase();
+
+      // Update only the identity fields. Legacy users may contain old address
+      // data that should not be revalidated while linking Google.
+      const identityUpdates = {
+        authProvider: provider,
+        providerUid: normalizeText(user.providerUid) || providerUid,
+      };
+      if (displayName && !normalizeText(user.name)) {
+        identityUpdates.name = displayName;
       }
-      user.authProvider = provider;
-      user.name = displayName || user.name;
-      user.email = email || user.email;
-      if (!normalizeText(user.phone)) {
-        user.phone = buildSocialPlaceholderPhone(provider, providerUid);
+      if (email && !normalizeText(user.email)) {
+        identityUpdates.email = email;
       }
-      await user.save();
+      if (previousAuthProvider === "google" || !normalizeText(user.phone)) {
+        identityUpdates.phone = buildSocialPlaceholderPhone(provider, providerUid);
+      }
+
+      user = await User.findByIdAndUpdate(user._id, identityUpdates, {
+        new: true,
+        runValidators: true,
+      });
+      if (!user) {
+        return res.status(404).json({ error: "User account was not found." });
+      }
     } else {
       const phone = buildSocialPlaceholderPhone(provider, providerUid);
-      user = new User({
-        ...updates,
+      user = await User.create({
+        name: displayName,
+        email,
+        providerUid,
+        authProvider: provider,
         phone,
         passwordHash: await bcrypt.hash(crypto.randomUUID(), 10),
       });
-      await user.save();
     }
 
     console.log("Social login success", {
@@ -883,6 +877,11 @@ router.post("/social-login", authLimiter, async (req, res) => {
     return issueAuthSession(res, user, 200, "Login successful.");
   } catch (error) {
     console.error("Social login error:", error);
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        error: "This Google account is already linked to another account.",
+      });
+    }
     return res.status(500).json({ error: "Server error during social login." });
   }
 });
