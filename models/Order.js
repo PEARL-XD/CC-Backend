@@ -32,6 +32,11 @@ const orderSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Snapshot the confirmed delivery location for the delivery team.
+    deliveryAddress: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
     packagingFee: { type: Number, default: 0 },
     platformFee: { type: Number, default: 0 },
     totalAmount: { type: Number, required: true },

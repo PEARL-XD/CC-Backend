@@ -741,6 +741,7 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       couponCode: coupon?.code,
       couponId: coupon?._id,
       couponDiscountAmount,
+      deliveryAddress: resolvedLocation,
       packagingFee,
       platformFee,
       totalAmount,
@@ -1108,7 +1109,7 @@ router.get("/admin/orders", authenticateToken, async (req, res) => {
     }
 
     const orders = await Order.find()
-      .populate("user", "name phone email society tower flat")
+      .populate("user", "name phone email society tower flat deliveryLocation")
       .sort({ createdAt: -1 });
 
     res.json({ orders });

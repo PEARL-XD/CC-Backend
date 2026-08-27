@@ -416,11 +416,9 @@ function sanitizeUserQuery() {
   return "-passwordHash -__v";
 }
 
-function buildSocialPlaceholderPhone(provider, providerUid) {
-  const normalizedProvider = normalizeText(provider).toLowerCase() || "social";
-  const normalizedUid = normalizeText(providerUid);
-
-  return `${normalizedProvider}:${normalizedUid}`;
+function isSocialPlaceholderPhone(phone) {
+  const value = normalizeText(phone).toLowerCase();
+  return value.startsWith("google:") || value.startsWith("apple:");
 }
 
 async function issueAuthSession(res, user, statusCode = 200, message = "Login successful.") {
@@ -814,7 +812,9 @@ router.post("/social-login", authLimiter, async (req, res) => {
 
       const tokenInfo = await tokenInfoRes.json();
       providerUid = normalizeText(tokenInfo.sub);
-      email = normalizeEmail(tokenInfo.email || req.body.email);
+      // Use only Google's verified email claim. The client-provided email is
+      // intentionally not used for account creation or account matching.
+      email = normalizeEmail(tokenInfo.email);
       displayName = normalizeText(
         req.body.name ||
           tokenInfo.name ||
@@ -833,6 +833,12 @@ router.post("/social-login", authLimiter, async (req, res) => {
           expected: [...acceptedGoogleAudiences],
         });
         return res.status(401).json({ error: "Google token audience mismatch." });
+      }
+
+      if (!email) {
+        return res.status(400).json({
+          error: "Google did not provide a verified email address. Please try again.",
+        });
       }
     } else {
       try {
@@ -863,8 +869,6 @@ router.post("/social-login", authLimiter, async (req, res) => {
     }
 
     if (user) {
-      const previousAuthProvider = normalizeText(user.authProvider).toLowerCase();
-
       // Update only the identity fields. Legacy users may contain old address
       // data that should not be revalidated while linking a social provider.
       const identityUpdates = {
@@ -877,8 +881,8 @@ router.post("/social-login", authLimiter, async (req, res) => {
       if (email && !normalizeText(user.email)) {
         identityUpdates.email = email;
       }
-      if (previousAuthProvider === "google" || !normalizeText(user.phone)) {
-        identityUpdates.phone = buildSocialPlaceholderPhone(provider, providerUid);
+      if (isSocialPlaceholderPhone(user.phone)) {
+        identityUpdates.$unset = { phone: 1 };
       }
 
       user = await User.findByIdAndUpdate(user._id, identityUpdates, {
@@ -894,13 +898,11 @@ router.post("/social-login", authLimiter, async (req, res) => {
           error: "Your Apple account email is required for first-time sign in.",
         });
       }
-      const phone = buildSocialPlaceholderPhone(provider, providerUid);
       user = await User.create({
         name: displayName,
         email,
         providerUid,
         authProvider: provider,
-        phone,
         passwordHash: await bcrypt.hash(crypto.randomUUID(), 10),
       });
     }

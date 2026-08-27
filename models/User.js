@@ -30,7 +30,9 @@ const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
-    phone: { type: String, required: true, unique: true },
+    // Social accounts may add their real phone later from Profile/checkout.
+    // Sparse keeps phone uniqueness for users who have supplied one.
+    phone: { type: String, unique: true, sparse: true, default: undefined },
     passwordHash: { type: String, required: true },
     tower: { type: String, default: "" },
     floor: { type: String, default: "" },
