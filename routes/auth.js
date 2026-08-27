@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import { promisify } from "util";
 import crypto from "crypto";
 import { Resend } from "resend";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import User from "../models/User.js";
 import RefreshToken from "../models/RefreshToken.js";
@@ -62,6 +63,21 @@ const resend = process.env.RESEND_API_KEY
 const GOOGLE_WEB_CLIENT_ID =
   process.env.GOOGLE_WEB_CLIENT_ID ||
   "790301039130-082hd6s2vnh4rgoes6grl5fskq2bv80c.apps.googleusercontent.com";
+const GOOGLE_IOS_CLIENT_ID =
+  process.env.GOOGLE_IOS_CLIENT_ID ||
+  "790301039130-qddlvqlmfakd0utogngvfrb7o5ut0e9m.apps.googleusercontent.com";
+const APPLE_CLIENT_ID = process.env.APPLE_CLIENT_ID || "com.pearl.cleanchops";
+const APPLE_JWKS = createRemoteJWKSet(
+  new URL("https://appleid.apple.com/auth/keys"),
+);
+
+async function verifyAppleIdentityToken(idToken) {
+  const result = await jwtVerify(idToken, APPLE_JWKS, {
+    issuer: "https://appleid.apple.com",
+    audience: APPLE_CLIENT_ID,
+  });
+  return result.payload;
+}
 
 function buildTokenPayload(user) {
   return {
@@ -770,7 +786,7 @@ router.post("/social-login", authLimiter, async (req, res) => {
       userAgent: req.get("user-agent"),
     });
 
-    if (provider !== "google") {
+    if (provider !== "google" && provider !== "apple") {
       return res.status(400).json({ error: "Unsupported social login provider." });
     }
 
@@ -778,45 +794,62 @@ router.post("/social-login", authLimiter, async (req, res) => {
       return res.status(400).json({ error: "Identity token is required." });
     }
 
-    const tokenInfoRes = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`,
-    );
+    let providerUid = "";
+    let email = "";
+    let displayName = "";
 
-    if (!tokenInfoRes.ok) {
-      const text = await tokenInfoRes.text().catch(() => "");
-      console.log("Google token verification failed", {
-        status: tokenInfoRes.status,
-        body: text,
-      });
-      return res.status(401).json({ error: "Invalid Google sign in token." });
+    if (provider === "google") {
+      const tokenInfoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`,
+      );
+
+      if (!tokenInfoRes.ok) {
+        const text = await tokenInfoRes.text().catch(() => "");
+        console.log("Google token verification failed", {
+          status: tokenInfoRes.status,
+          body: text,
+        });
+        return res.status(401).json({ error: "Invalid Google sign in token." });
+      }
+
+      const tokenInfo = await tokenInfoRes.json();
+      providerUid = normalizeText(tokenInfo.sub);
+      email = normalizeEmail(tokenInfo.email || req.body.email);
+      displayName = normalizeText(
+        req.body.name ||
+          tokenInfo.name ||
+          tokenInfo.email?.split("@")?.[0] ||
+          "CleanChops User",
+      );
+
+      const acceptedGoogleAudiences = new Set([
+        GOOGLE_WEB_CLIENT_ID,
+        GOOGLE_IOS_CLIENT_ID,
+      ]);
+
+      if (tokenInfo.aud && !acceptedGoogleAudiences.has(tokenInfo.aud)) {
+        console.log("Google token audience mismatch", {
+          aud: tokenInfo.aud,
+          expected: [...acceptedGoogleAudiences],
+        });
+        return res.status(401).json({ error: "Google token audience mismatch." });
+      }
+    } else {
+      try {
+        const appleClaims = await verifyAppleIdentityToken(idToken);
+        providerUid = normalizeText(appleClaims.sub);
+        email = normalizeEmail(appleClaims.email || req.body.email);
+        displayName = normalizeText(req.body.name || "CleanChops User");
+      } catch (error) {
+        console.log("Apple token verification failed", {
+          message: error?.message,
+        });
+        return res.status(401).json({ error: "Invalid Apple sign in token." });
+      }
     }
-
-    const tokenInfo = await tokenInfoRes.json();
-    const providerUid = normalizeText(tokenInfo.sub);
-    const email = normalizeEmail(tokenInfo.email || req.body.email);
-    const displayName = normalizeText(
-      req.body.name ||
-        tokenInfo.name ||
-        tokenInfo.email?.split("@")?.[0] ||
-        "CleanChops User",
-    );
 
     if (!providerUid) {
       return res.status(400).json({ error: "Invalid social identity token." });
-    }
-
-    if (tokenInfo.aud && tokenInfo.aud !== GOOGLE_WEB_CLIENT_ID) {
-      console.log("Google token audience mismatch", {
-        aud: tokenInfo.aud,
-        expected: GOOGLE_WEB_CLIENT_ID,
-      });
-      return res.status(401).json({ error: "Google token audience mismatch." });
-    }
-
-    if (!email) {
-      return res
-        .status(400)
-        .json({ error: "Google account email is required for sign in." });
     }
 
     let user = await User.findOne({ providerUid });
@@ -833,10 +866,10 @@ router.post("/social-login", authLimiter, async (req, res) => {
       const previousAuthProvider = normalizeText(user.authProvider).toLowerCase();
 
       // Update only the identity fields. Legacy users may contain old address
-      // data that should not be revalidated while linking Google.
+      // data that should not be revalidated while linking a social provider.
       const identityUpdates = {
         authProvider: provider,
-        providerUid: normalizeText(user.providerUid) || providerUid,
+        providerUid,
       };
       if (displayName && !normalizeText(user.name)) {
         identityUpdates.name = displayName;
@@ -856,6 +889,11 @@ router.post("/social-login", authLimiter, async (req, res) => {
         return res.status(404).json({ error: "User account was not found." });
       }
     } else {
+      if (!email) {
+        return res.status(400).json({
+          error: "Your Apple account email is required for first-time sign in.",
+        });
+      }
       const phone = buildSocialPlaceholderPhone(provider, providerUid);
       user = await User.create({
         name: displayName,
@@ -879,7 +917,7 @@ router.post("/social-login", authLimiter, async (req, res) => {
     console.error("Social login error:", error);
     if (error?.code === 11000) {
       return res.status(409).json({
-        error: "This Google account is already linked to another account.",
+        error: "This social account is already linked to another account.",
       });
     }
     return res.status(500).json({ error: "Server error during social login." });
