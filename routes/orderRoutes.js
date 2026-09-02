@@ -572,6 +572,10 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "Cart is empty" });
     }
 
+    if (cartItems.length > 50) {
+      return res.status(400).json({ error: "Cart contains too many items" });
+    }
+
     const productIds = cartItems.map((i) => i._id);
     const products = await findItemsByIdsFlexible(productIds);
 
@@ -584,10 +588,24 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     const scheduleText = String(schedule || "").trim();
 
     const currentUser = await User.findById(req.user.id)
-      .select("deliveryLocation tower floor flat society")
+      .select("phone deliveryLocation tower floor flat society")
       .lean();
 
     const resolvedLocation = resolveOrderDeliveryLocation(currentUser || {});
+
+    const phoneDigits = String(currentUser?.phone || "").replace(/\D/g, "");
+    const normalizedPhone =
+      phoneDigits.length === 12 && phoneDigits.startsWith("91")
+        ? phoneDigits.slice(2)
+        : phoneDigits;
+
+    if (!/^\d{10}$/.test(normalizedPhone)) {
+      return res.status(400).json({
+        error:
+          "Please add a valid mobile number to your profile before placing an order.",
+        code: "PHONE_REQUIRED",
+      });
+    }
 
     if (!resolvedLocation) {
       return res.status(400).json({

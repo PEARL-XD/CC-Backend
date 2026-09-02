@@ -29,8 +29,10 @@ app.set("trust proxy", 1); // REQUIRED for Render / Railway / VPS
 
 app.use(helmet());
 app.use(cookieParser());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// API requests contain references and addresses, not uploaded files. Keep the
+// body bounded so malformed clients cannot allocate excessive memory.
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 /* =======================
    CORS (adjust origin later)

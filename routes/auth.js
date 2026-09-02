@@ -896,6 +896,7 @@ router.post("/social-login", authLimiter, async (req, res) => {
       if (!email) {
         return res.status(400).json({
           error: "Your Apple account email is required for first-time sign in.",
+          code: "APPLE_EMAIL_REQUIRED",
         });
       }
       user = await User.create({

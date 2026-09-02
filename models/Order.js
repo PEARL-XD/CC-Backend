@@ -67,4 +67,8 @@ const orderSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// Supports the existing GET /orders/me sort without changing stored orders.
+orderSchema.index({ user: 1, createdAt: -1 });
+
 export const Order = mongoose.model("Order", orderSchema);

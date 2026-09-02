@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 
 const itemSchema = new mongoose.Schema({
   category: { type: String, required: true },
+  // Secondary filter used inside the Uncooked section.
+  proteinType: { type: String, default: "" },
   name: { type: String, required: true },
   desc: { type: String },
   longdesc: { type: String },

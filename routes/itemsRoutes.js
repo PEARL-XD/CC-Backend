@@ -87,6 +87,18 @@ function normalizedCategoryKey(category) {
     .replaceAll(/[^a-z0-9]/g, "");
 }
 
+function uncookedProteinType(item) {
+  const explicit = String(item?.proteinType || "").trim().toLowerCase();
+  if (["chicken", "mutton", "fish"].includes(explicit)) return explicit;
+
+  const text = `${item?.name || ""} ${item?.desc || ""}`.toLowerCase();
+  if (/\b(mutton|goat|lamb)\b/.test(text)) return "mutton";
+  if (/\b(fish|rohu|katla|pomfret|surmai|salmon|prawns?|prawn)\b/.test(text)) {
+    return "fish";
+  }
+  return "chicken";
+}
+
 function firstArticleImage(articles) {
   if (!Array.isArray(articles)) return "";
 
@@ -184,7 +196,7 @@ router.get("/items", async (req, res) => {
 
     const items = await Item.find()
       .select(
-        "_id name desc longdesc imgUrl price oldprice pricingOptions cookedQuarterPrice cookedHalfPrice cookedFullPrice rtc200Price rtc400Price proteinPer100g carbsPer100g caloriesPer100g category isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl 200price 400Price 200gPrice 400gPrice servingSize"
+        "_id name desc longdesc imgUrl price oldprice pricingOptions cookedQuarterPrice cookedHalfPrice cookedFullPrice rtc200Price rtc400Price proteinPer100g carbsPer100g caloriesPer100g category proteinType isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl 200price 400Price 200gPrice 400gPrice servingSize"
       )
       .lean();
 
@@ -217,6 +229,10 @@ router.get("/items", async (req, res) => {
         proteinPer100g: it.proteinPer100g,
         carbsPer100g: it.carbsPer100g,
         caloriesPer100g: it.caloriesPer100g,
+        proteinType:
+          normalizedCategoryKey(category) === "uncooked"
+            ? uncookedProteinType(it)
+            : "",
         isExternalItem: Boolean(it.isExternalItem),
         showSourceNotice: Boolean(it.showSourceNotice),
         sourceNoticeTitle: it.sourceNoticeTitle,
