@@ -79,6 +79,30 @@ async function verifyAppleIdentityToken(idToken) {
   return result.payload;
 }
 
+function socialLoginRequestId(req) {
+  return req.get("x-request-id") || crypto.randomUUID();
+}
+
+function maskEmail(email) {
+  const value = normalizeText(email);
+  const at = value.indexOf("@");
+  if (at <= 1) return value ? "[redacted]" : "";
+  return `${value[0]}***${value.slice(at - 1)}`;
+}
+
+function clientIdSuffix(clientId) {
+  return clientId ? `...${clientId.slice(-12)}` : "missing";
+}
+
+function socialLoginErrorDetails(error) {
+  return {
+    name: error?.name,
+    code: error?.code,
+    message: error?.message,
+    stack: isProduction ? undefined : error?.stack,
+  };
+}
+
 function buildTokenPayload(user) {
   return {
     id: user.id || user._id.toString(),
@@ -773,22 +797,35 @@ router.post("/login", authLimiter, async (req, res) => {
 
 // POST /social-login
 router.post("/social-login", authLimiter, async (req, res) => {
+  const requestId = socialLoginRequestId(req);
+  res.set("x-request-id", requestId);
+
   try {
     const provider = normalizeText(req.body.provider).toLowerCase();
     const idToken = normalizeText(req.body.idToken);
 
     console.log("Social login request received", {
+      requestId,
       provider,
       hasToken: Boolean(idToken),
+      tokenLength: idToken.length || 0,
       ip: req.ip,
       userAgent: req.get("user-agent"),
     });
 
     if (provider !== "google" && provider !== "apple") {
+      console.warn("Social login rejected: unsupported provider", {
+        requestId,
+        provider,
+      });
       return res.status(400).json({ error: "Unsupported social login provider." });
     }
 
     if (!idToken) {
+      console.warn("Social login rejected: missing identity token", {
+        requestId,
+        provider,
+      });
       return res.status(400).json({ error: "Identity token is required." });
     }
 
@@ -802,10 +839,10 @@ router.post("/social-login", authLimiter, async (req, res) => {
       );
 
       if (!tokenInfoRes.ok) {
-        const text = await tokenInfoRes.text().catch(() => "");
-        console.log("Google token verification failed", {
+        await tokenInfoRes.text().catch(() => "");
+        console.warn("Google token verification failed", {
+          requestId,
           status: tokenInfoRes.status,
-          body: text,
         });
         return res.status(401).json({ error: "Invalid Google sign in token." });
       }
@@ -827,17 +864,40 @@ router.post("/social-login", authLimiter, async (req, res) => {
         GOOGLE_IOS_CLIENT_ID,
       ]);
 
+      console.log("Google token verified", {
+        requestId,
+        hasSubject: Boolean(providerUid),
+        email: maskEmail(tokenInfo.email),
+        emailVerified: tokenInfo.email_verified,
+        audience: clientIdSuffix(tokenInfo.aud),
+        authorizedParty: clientIdSuffix(tokenInfo.azp),
+        acceptedAudiences: [...acceptedGoogleAudiences].map(clientIdSuffix),
+        webClientConfigured: Boolean(GOOGLE_WEB_CLIENT_ID),
+        iosClientConfigured: Boolean(GOOGLE_IOS_CLIENT_ID),
+      });
+
       if (tokenInfo.aud && !acceptedGoogleAudiences.has(tokenInfo.aud)) {
-        console.log("Google token audience mismatch", {
-          aud: tokenInfo.aud,
-          expected: [...acceptedGoogleAudiences],
+        console.warn("Google token audience mismatch", {
+          requestId,
+          audience: clientIdSuffix(tokenInfo.aud),
+          expected: [...acceptedGoogleAudiences].map(clientIdSuffix),
         });
-        return res.status(401).json({ error: "Google token audience mismatch." });
+        return res.status(401).json({
+          error: "Google token audience mismatch.",
+          code: "GOOGLE_AUDIENCE_MISMATCH",
+          requestId,
+        });
       }
 
       if (!email) {
+        console.warn("Google token rejected: verified email missing", {
+          requestId,
+          hasSubject: Boolean(providerUid),
+        });
         return res.status(400).json({
           error: "Google did not provide a verified email address. Please try again.",
+          code: "GOOGLE_EMAIL_MISSING",
+          requestId,
         });
       }
     } else {
@@ -847,26 +907,49 @@ router.post("/social-login", authLimiter, async (req, res) => {
         email = normalizeEmail(appleClaims.email || req.body.email);
         displayName = normalizeText(req.body.name || "CleanChops User");
       } catch (error) {
-        console.log("Apple token verification failed", {
+        console.warn("Apple token verification failed", {
+          requestId,
           message: error?.message,
         });
-        return res.status(401).json({ error: "Invalid Apple sign in token." });
+        return res.status(401).json({
+          error: "Invalid Apple sign in token.",
+          code: "APPLE_TOKEN_INVALID",
+          requestId,
+        });
       }
     }
 
     if (!providerUid) {
+      console.warn("Social login rejected: provider subject missing", {
+        requestId,
+        provider,
+      });
       return res.status(400).json({ error: "Invalid social identity token." });
     }
 
     let user = await User.findOne({ providerUid });
+    const matchedByProviderUid = Boolean(user);
     if (!user) {
       user = await User.findOne({ email });
     }
+    const matchedByEmail = !matchedByProviderUid && Boolean(user);
     if (!user && email) {
       user = await User.findOne({
         email: new RegExp(`^${escapeRegex(email)}$`, "i"),
       });
     }
+    const matchedByCaseInsensitiveEmail =
+      !matchedByProviderUid && !matchedByEmail && Boolean(user);
+
+    console.log("Social login account lookup complete", {
+      requestId,
+      provider,
+      email: maskEmail(email),
+      matchedByProviderUid,
+      matchedByEmail,
+      matchedByCaseInsensitiveEmail,
+      accountFound: Boolean(user),
+    });
 
     if (user) {
       // Update only the identity fields. Legacy users may contain old address
@@ -890,13 +973,21 @@ router.post("/social-login", authLimiter, async (req, res) => {
         runValidators: true,
       });
       if (!user) {
+        console.error("Social login account update returned no user", {
+          requestId,
+        });
         return res.status(404).json({ error: "User account was not found." });
       }
     } else {
       if (!email) {
+        console.warn("Social login rejected: new account email missing", {
+          requestId,
+          provider,
+        });
         return res.status(400).json({
           error: "Your Apple account email is required for first-time sign in.",
           code: "APPLE_EMAIL_REQUIRED",
+          requestId,
         });
       }
       user = await User.create({
@@ -909,21 +1000,31 @@ router.post("/social-login", authLimiter, async (req, res) => {
     }
 
     console.log("Social login success", {
+      requestId,
       provider,
-      providerUid,
       userId: user._id.toString(),
-      email,
+      email: maskEmail(email),
     });
 
     return issueAuthSession(res, user, 200, "Login successful.");
   } catch (error) {
-    console.error("Social login error:", error);
+    console.error("Social login error", {
+      requestId,
+      ...socialLoginErrorDetails(error),
+    });
     if (error?.code === 11000) {
+      console.warn("Social login rejected: duplicate identity", { requestId });
       return res.status(409).json({
         error: "This social account is already linked to another account.",
+        code: "SOCIAL_IDENTITY_CONFLICT",
+        requestId,
       });
     }
-    return res.status(500).json({ error: "Server error during social login." });
+    return res.status(500).json({
+      error: "Server error during social login.",
+      code: "SOCIAL_LOGIN_SERVER_ERROR",
+      requestId,
+    });
   }
 });
 
