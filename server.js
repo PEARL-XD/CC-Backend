@@ -105,29 +105,30 @@ async function setStoreOpenStatus(storeOpen) {
   clearStorefrontSettingsCache();
 }
 
-cron.schedule(
-  "45 8 * * *",
-  async () => {
-    try {
-      await setStoreOpenStatus(true);
-    } catch (error) {
-      console.error("Store open cron error:", error);
-    }
-  },
-  { timezone: "Asia/Kolkata" },
-);
+// Store opening/closing automation is temporarily disabled.
+// cron.schedule(
+//   "45 8 * * *",
+//   async () => {
+//     try {
+//       await setStoreOpenStatus(true);
+//     } catch (error) {
+//       console.error("Store open cron error:", error);
+//     }
+//   },
+//   { timezone: "Asia/Kolkata" },
+// );
 
-cron.schedule(
-  "25 21 * * *",
-  async () => {
-    try {
-      await setStoreOpenStatus(false);
-    } catch (error) {
-      console.error("Store close cron error:", error);
-    }
-  },
-  { timezone: "Asia/Kolkata" },
-);
+// cron.schedule(
+//   "25 21 * * *",
+//   async () => {
+//     try {
+//       await setStoreOpenStatus(false);
+//     } catch (error) {
+//       console.error("Store close cron error:", error);
+//     }
+//   },
+//   { timezone: "Asia/Kolkata" },
+// );
 
 /* =======================
    START SERVER (HTTP ONLY)
