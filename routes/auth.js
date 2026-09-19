@@ -103,6 +103,14 @@ function socialLoginErrorDetails(error) {
   };
 }
 
+function duplicateKeyField(error) {
+  const patternFields = Object.keys(error?.keyPattern || {});
+  if (patternFields.length) return patternFields[0];
+
+  const valueFields = Object.keys(error?.keyValue || {});
+  return valueFields[0] || "unknown";
+}
+
 function buildTokenPayload(user) {
   return {
     id: user.id || user._id.toString(),
@@ -1013,7 +1021,29 @@ router.post("/social-login", authLimiter, async (req, res) => {
       ...socialLoginErrorDetails(error),
     });
     if (error?.code === 11000) {
-      console.warn("Social login rejected: duplicate identity", { requestId });
+      const field = duplicateKeyField(error);
+      console.warn("Social login rejected: duplicate database key", {
+        requestId,
+        field,
+        keyPattern: error?.keyPattern,
+      });
+
+      if (field === "phone") {
+        return res.status(409).json({
+          error: "This account could not be created because of a phone index conflict.",
+          code: "SOCIAL_PHONE_INDEX_CONFLICT",
+          requestId,
+        });
+      }
+
+      if (field === "email") {
+        return res.status(409).json({
+          error: "An account already uses this email address.",
+          code: "SOCIAL_EMAIL_CONFLICT",
+          requestId,
+        });
+      }
+
       return res.status(409).json({
         error: "This social account is already linked to another account.",
         code: "SOCIAL_IDENTITY_CONFLICT",

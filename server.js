@@ -18,6 +18,7 @@ import adminInventoryRoutes from "./routes/adminInventoryRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import couponRoutes from "./routes/couponRoutes.js";
 import StorefrontSettings from "./models/StorefrontSettings.js";
+import User from "./models/User.js";
 import { clearStorefrontSettingsCache } from "./utils/storefrontSettingsCache.js";
 const app = express();
 
@@ -51,9 +52,43 @@ app.get("/health", (req, res) => {
    DATABASE
 ======================= */
 
+async function ensureUserPhoneIndex() {
+  const indexes = await User.collection.indexes();
+  const phoneIndexes = indexes.filter((index) => index.key?.phone === 1);
+  const hasCorrectIndex = phoneIndexes.some(
+    (index) => index.unique === true && index.sparse === true,
+  );
+
+  if (hasCorrectIndex && phoneIndexes.length === 1) return;
+
+  // Empty phone values are not real phone numbers and would block a sparse
+  // unique index if old records stored them as null or an empty string.
+  await User.updateMany(
+    { $or: [{ phone: null }, { phone: "" }] },
+    { $unset: { phone: 1 } },
+  );
+
+  for (const index of phoneIndexes) {
+    await User.collection.dropIndex(index.name);
+  }
+
+  await User.collection.createIndex(
+    { phone: 1 },
+    { unique: true, sparse: true, name: "phone_1" },
+  );
+  console.log("✅ User phone index verified as sparse and unique");
+}
+
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB connected"))
+  .then(async () => {
+    console.log("✅ MongoDB connected");
+    try {
+      await ensureUserPhoneIndex();
+    } catch (error) {
+      console.error("❌ User phone index check failed:", error);
+    }
+  })
   .catch((err) => console.error("❌ MongoDB error:", err));
 
 /* =======================
