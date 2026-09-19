@@ -36,14 +36,38 @@ app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 /* =======================
-   CORS (adjust origin later)
+   CORS
 ======================= */
+
+const normalizeOrigin = (value = "") => value.trim().replace(/\/$/, "");
+const configuredFrontendOrigins = String(process.env.FRONTEND_URLS || "")
+  .split(",")
+  .map(normalizeOrigin)
+  .filter(Boolean);
+
+const allowedFrontendOrigins = new Set([
+  "https://localhost:5173",
+  "http://localhost:5173",
+  "https://192.168.1.9:5173",
+  "http://192.168.1.9:5173",
+  "https://cc-frontend-mhbl.onrender.com",
+  "https://cleanchops.in",
+  ...configuredFrontendOrigins,
+]);
 
 app.use(
   cors({
-    origin: ["https://localhost:5173","https://192.168.1.9:5173/","https://192.168.1.9:5173","https://cc-frontend-mhbl.onrender.com","https://cleanchops.in"],// frontend local (change later to prod)
+    origin(origin, callback) {
+      // Non-browser requests (health checks, mobile apps, curl) have no origin.
+      if (!origin || allowedFrontendOrigins.has(normalizeOrigin(origin))) {
+        return callback(null, true);
+      }
+
+      console.warn("CORS origin rejected", { origin });
+      return callback(new Error("Origin is not allowed by CORS."));
+    },
     credentials: true,
-  })
+  }),
 );
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
