@@ -25,7 +25,7 @@ const notificationReceiptSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["broadcast", "order", "promo"],
+      enum: ["broadcast", "order", "admin_order", "promo"],
       default: "broadcast",
       index: true,
     },

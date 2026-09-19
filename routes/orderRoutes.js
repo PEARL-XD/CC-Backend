@@ -298,6 +298,7 @@ const sendNewOrderAdminNotification = async (order) => {
   return sendPushToAdmins({
     title: "New order received",
     body: `Rs. ${amount} ${paymentMethod} order placed with ${itemCount} item${itemCount === 1 ? "" : "s"}.`,
+    orderAlert: true,
     data: {
       type: "admin_order",
       route: "/admin",
@@ -308,6 +309,20 @@ const sendNewOrderAdminNotification = async (order) => {
     },
   });
 };
+
+const sendAdminOrderStatusNotification = async (order, status, title, body) =>
+  sendPushToAdmins({
+    title,
+    body,
+    orderAlert: true,
+    data: {
+      type: "admin_order",
+      route: "/admin",
+      orderId: order._id.toString(),
+      orderStatus: status,
+      paymentMethod: order.paymentMethod || "ONLINE",
+    },
+  });
 
 const confirmRazorpayOrder = async ({
   order,
@@ -352,6 +367,18 @@ const confirmRazorpayOrder = async ({
     console.log("Customer order notification result:", notificationResult);
   } catch (error) {
     console.error("Customer order notification failed:", error);
+  }
+
+  try {
+    const notificationResult = await sendAdminOrderStatusNotification(
+      order,
+      "CONFIRMED",
+      "Order payment confirmed",
+      "An online order has been paid and is ready to prepare.",
+    );
+    console.log("Admin payment notification result:", notificationResult);
+  } catch (error) {
+    console.error("Admin payment notification failed:", error);
   }
 
   return { statusCode: 200, order };
@@ -536,6 +563,16 @@ const cancelOrderForPaymentIssue = async (order, paymentStatus) => {
 
   await order.save();
   await sendOrderStatusNotification(order, "CANCELLED");
+  try {
+    await sendAdminOrderStatusNotification(
+      order,
+      "CANCELLED",
+      "Order cancelled",
+      "An order was cancelled or its payment could not be completed.",
+    );
+  } catch (error) {
+    console.error("Admin payment cancellation notification failed:", error);
+  }
 };
 
 const canUserCancelOrder = (order) => {
@@ -1080,6 +1117,19 @@ router.post("/orders/:id/cancel", authenticateToken, async (req, res) => {
       })
       .catch((error) => {
         console.error("Customer order cancellation notification failed:", error);
+      });
+
+    await sendAdminOrderStatusNotification(
+      order,
+      "CANCELLED",
+      "Order cancelled",
+      "A customer cancelled an order.",
+    )
+      .then((result) => {
+        console.log("Admin order cancellation notification result:", result);
+      })
+      .catch((error) => {
+        console.error("Admin order cancellation notification failed:", error);
       });
 
     return res.json({

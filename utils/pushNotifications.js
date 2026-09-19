@@ -66,6 +66,58 @@ function dedupeTokenDocs(docs = []) {
   return uniqueDocs;
 }
 
+const orderReminderTimers = new Map();
+const ORDER_REMINDER_DELAYS_MS = [60 * 1000, 3 * 60 * 1000];
+
+async function orderNotificationWasOpened(notificationId) {
+  return Boolean(
+    await NotificationReceipt.exists({
+      notificationId,
+      type: "admin_order",
+      status: "OPENED",
+    }),
+  );
+}
+
+function scheduleOrderReminders({
+  notificationId,
+  title,
+  body,
+  data,
+}) {
+  ORDER_REMINDER_DELAYS_MS.forEach((delayMs, index) => {
+    const reminderNumber = index + 1;
+    const timerKey = `${notificationId}:${reminderNumber}`;
+    const timer = setTimeout(async () => {
+      orderReminderTimers.delete(timerKey);
+
+      try {
+        if (await orderNotificationWasOpened(notificationId)) return;
+
+        await sendPushToAdmins({
+          title,
+          body,
+          orderAlert: true,
+          skipReminders: true,
+          data: {
+            ...data,
+            notificationId,
+            reminderNumber,
+          },
+        });
+      } catch (error) {
+        console.error("Order notification reminder failed:", {
+          notificationId,
+          reminderNumber,
+          error: error?.message,
+        });
+      }
+    }, delayMs);
+
+    orderReminderTimers.set(timerKey, timer);
+  });
+}
+
 async function sendPersonalizedPromoNotifications({
   docs = [],
   users = [],
@@ -139,7 +191,13 @@ async function sendPersonalizedPromoNotifications({
   };
 }
 
-export async function sendPushToTokens({ tokens, title, body, data = {} }) {
+export async function sendPushToTokens({
+  tokens,
+  title,
+  body,
+  data = {},
+  orderAlert = false,
+}) {
   if (!tokens?.length) {
     return {
       successCount: 0,
@@ -170,7 +228,7 @@ export async function sendPushToTokens({ tokens, title, body, data = {} }) {
       apns: {
         payload: {
           aps: {
-            sound: "default",
+            sound: orderAlert ? "order.caf" : "default",
           },
         },
       },
@@ -297,6 +355,8 @@ export async function sendPushToAdmins({
   title,
   body,
   data = {},
+  orderAlert = false,
+  skipReminders = false,
 }) {
   const adminUsers = await User.find({ role: "admin" }).select("_id").lean();
   const adminIds = adminUsers.map((user) => user._id).filter(Boolean);
@@ -310,7 +370,33 @@ export async function sendPushToAdmins({
     .lean();
   const tokens = docs.map((doc) => doc.token).filter(Boolean);
 
-  return sendPushToTokens({ tokens, title, body, data });
+  const notificationId =
+    orderAlert && data.notificationId
+      ? String(data.notificationId)
+      : orderAlert
+        ? `admin_order_${data.orderId || Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        : null;
+  const notificationData = notificationId
+    ? { ...data, notificationId }
+    : data;
+  const result = await sendPushToTokens({
+    tokens,
+    title,
+    body,
+    data: notificationData,
+    orderAlert,
+  });
+
+  if (orderAlert && notificationId && !skipReminders && result.successCount > 0) {
+    scheduleOrderReminders({
+      notificationId,
+      title,
+      body,
+      data: notificationData,
+    });
+  }
+
+  return { ...result, notificationId };
 }
 
 export async function sendPromoBroadcast({ title, body, route = "/home" }) {
