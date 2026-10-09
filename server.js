@@ -8,7 +8,7 @@ import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import cron from "node-cron";
 
-import authRouter from "./routes/auth.js";
+import authRouter, { authenticateToken } from "./routes/auth.js";
 import itemsRouter from "./routes/itemsRoutes.js";
 import cartRoutes from "./routes/cartRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
@@ -20,6 +20,9 @@ import couponRoutes from "./routes/couponRoutes.js";
 import StorefrontSettings from "./models/StorefrontSettings.js";
 import User from "./models/User.js";
 import { clearStorefrontSettingsCache } from "./utils/storefrontSettingsCache.js";
+import CashfreeSandboxOrder from "./models/CashfreeSandboxOrder.js";
+import { createCashfreeClient } from "./services/cashfree.js";
+import { CASHFREE_SANDBOX_PATH, captureCashfreeWebhookBody, createCashfreeSandboxRouter } from "./routes/cashfreeSandboxRoutes.js";
 const app = express();
 
 /* =======================
@@ -32,7 +35,7 @@ app.use(helmet());
 app.use(cookieParser());
 // API requests contain references and addresses, not uploaded files. Keep the
 // body bounded so malformed clients cannot allocate excessive memory.
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({ limit: "256kb", verify: captureCashfreeWebhookBody }));
 app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 /* =======================
@@ -121,6 +124,12 @@ mongoose
    ROUTES
 ======================= */
 
+app.use(CASHFREE_SANDBOX_PATH, createCashfreeSandboxRouter({
+  authenticateToken,
+  User,
+  SandboxOrder: CashfreeSandboxOrder,
+  client: createCashfreeClient(),
+}));
 app.use("/api", authRouter, supportRoutes,itemsRouter,cartRoutes,orderRoutes,adminInventoryRoutes,notificationRoutes,couponRoutes,);
 app.get("/", (req, res) => {
   res.send("CleanCuts backend running");

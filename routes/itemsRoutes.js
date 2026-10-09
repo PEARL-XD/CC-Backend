@@ -1,6 +1,7 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import Item from "../models/Item.js";
+import { PublicReadCache } from "../utils/publicReadCache.js";
 import { findItemByIdFlexible } from "../utils/itemLookup.js";
 import {
   getDefaultDisplayPriceForItem,
@@ -40,35 +41,9 @@ const itemsLimiter = rateLimit({
 });
 router.use(itemsLimiter);
 
-const cache = new Map();
+const cache = new PublicReadCache({ maxEntries: 256, ttlMs: CACHE_TTL_MS });
 
-function setCache(key, value, ttl = CACHE_TTL_MS) {
-  const expiresAt = Date.now() + ttl;
-  cache.set(key, { value, expiresAt });
-}
-
-function getCache(key) {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    cache.delete(key);
-    return null;
-  }
-  return entry.value;
-}
-
-function clearCache(prefix = "") {
-  if (!prefix) {
-    cache.clear();
-    return;
-  }
-  for (const key of cache.keys()) {
-    if (key.startsWith(prefix)) cache.delete(key);
-  }
-}
 export function clearItemsCache() {
-  clearCache("items:");
-  clearCache("search:");
   cache.clear();
 }
 function safeRegex(q) {
@@ -186,81 +161,83 @@ function buildPricingPayload(item) {
 router.get("/items", async (req, res) => {
   try {
     const cacheKey = "items:all";
-    const cached = getCache(cacheKey);
+    const cached = cache.get(cacheKey);
     if (cached) {
       res.set("X-Cache", "HIT");
       return res.json(cached);
     }
 
-    const settings = await getStorefrontSettings();
+    const sections = await cache.getOrLoad(cacheKey, async () => {
+      const settings = await getStorefrontSettings();
 
-    const items = await Item.find()
-      .select(
-        "_id name desc longdesc imgUrl price oldprice pricingOptions cookedQuarterPrice cookedHalfPrice cookedFullPrice rtc200Price rtc400Price proteinPer100g carbsPer100g caloriesPer100g category proteinType isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl 200price 400Price 200gPrice 400gPrice servingSize"
-      )
-      .lean();
+      const items = await Item.find()
+        .select(
+          "_id name desc longdesc imgUrl price oldprice pricingOptions cookedQuarterPrice cookedHalfPrice cookedFullPrice rtc200Price rtc400Price proteinPer100g carbsPer100g caloriesPer100g category proteinType isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl 200price 400Price 200gPrice 400gPrice servingSize"
+        )
+        .lean();
 
-    const categoryMap = new Map();
+      const categoryMap = new Map();
 
-    for (const it of items) {
-      const img = chooseImageUrl(it.imgUrl);
-      const category = it.category || "Uncategorized";
-      const sectionDisabled = isSectionDisabledForCategory(category, settings);
-      const pricing = buildPricingPayload(it);
+      for (const it of items) {
+        const img = chooseImageUrl(it.imgUrl);
+        const category = it.category || "Uncategorized";
+        const sectionDisabled = isSectionDisabledForCategory(category, settings);
+        const pricing = buildPricingPayload(it);
 
-      if (!categoryMap.has(category)) categoryMap.set(category, []);
-      categoryMap.get(category).push({
-        _id: it._id,
-        name: it.name,
-        desc: it.desc,
-        longdesc: it.longdesc,
-        img,
-        price: it.price ?? pricing.displayPrice,
-        oldprice: it.oldprice,
-        cookedQuarterPrice: it.cookedQuarterPrice,
-        cookedHalfPrice: it.cookedHalfPrice,
-        cookedFullPrice: it.cookedFullPrice,
-        rtc200Price: it.rtc200Price,
-        rtc400Price: it.rtc400Price,
-        pricingMode: pricing.pricingMode,
-        defaultSelectedSize: pricing.defaultSelectedSize,
-        showSizeSelector: pricing.showSizeSelector,
-        pricingOptions: pricing.pricingOptions,
-        proteinPer100g: it.proteinPer100g,
-        carbsPer100g: it.carbsPer100g,
-        caloriesPer100g: it.caloriesPer100g,
-        proteinType:
-          normalizedCategoryKey(category) === "uncooked"
-            ? uncookedProteinType(it)
+        if (!categoryMap.has(category)) categoryMap.set(category, []);
+        categoryMap.get(category).push({
+          _id: it._id,
+          name: it.name,
+          desc: it.desc,
+          longdesc: it.longdesc,
+          img,
+          price: it.price ?? pricing.displayPrice,
+          oldprice: it.oldprice,
+          cookedQuarterPrice: it.cookedQuarterPrice,
+          cookedHalfPrice: it.cookedHalfPrice,
+          cookedFullPrice: it.cookedFullPrice,
+          rtc200Price: it.rtc200Price,
+          rtc400Price: it.rtc400Price,
+          pricingMode: pricing.pricingMode,
+          defaultSelectedSize: pricing.defaultSelectedSize,
+          showSizeSelector: pricing.showSizeSelector,
+          pricingOptions: pricing.pricingOptions,
+          proteinPer100g: it.proteinPer100g,
+          carbsPer100g: it.carbsPer100g,
+          caloriesPer100g: it.caloriesPer100g,
+          proteinType:
+            normalizedCategoryKey(category) === "uncooked"
+              ? uncookedProteinType(it)
+              : "",
+          isExternalItem: Boolean(it.isExternalItem),
+          showSourceNotice: Boolean(it.showSourceNotice),
+          sourceNoticeTitle: it.sourceNoticeTitle,
+          sourceNoticeMessage: it.sourceNoticeMessage,
+          sourceLabel: it.sourceLabel,
+          sourceUrl: it.sourceUrl,
+          isOutOfStock: Boolean(it.isOutOfStock),
+          isCategoryDisabled: sectionDisabled,
+          isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
+        });
+      }
+
+      const sections = [];
+      for (const [category, articles] of categoryMap.entries()) {
+        const sectionDisabled = isSectionDisabledForCategory(category, settings);
+        sections.push({
+          title: category,
+          image: sectionImageFor(category, articles, settings),
+          imageAsset: sectionImageAssetFor(category),
+          isDisabled: sectionDisabled,
+          disabledReason: sectionDisabled
+            ? getSectionDisabledReason(category)
             : "",
-        isExternalItem: Boolean(it.isExternalItem),
-        showSourceNotice: Boolean(it.showSourceNotice),
-        sourceNoticeTitle: it.sourceNoticeTitle,
-        sourceNoticeMessage: it.sourceNoticeMessage,
-        sourceLabel: it.sourceLabel,
-        sourceUrl: it.sourceUrl,
-        isOutOfStock: Boolean(it.isOutOfStock),
-        isCategoryDisabled: sectionDisabled,
-        isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
-      });
-    }
+          articles,
+        });
+      }
 
-    const sections = [];
-    for (const [category, articles] of categoryMap.entries()) {
-      const sectionDisabled = isSectionDisabledForCategory(category, settings);
-      sections.push({
-        title: category,
-        image: sectionImageFor(category, articles, settings),
-        imageAsset: sectionImageAssetFor(category),
-        isDisabled: sectionDisabled,
-        disabledReason: sectionDisabled
-          ? getSectionDisabledReason(category)
-          : "",
-        articles,
-      });
-    }
-
-    setCache(cacheKey, sections);
+      return sections;
+    });
     res.set("X-Cache", "MISS");
     return res.json(sections);
   } catch (err) {
@@ -289,68 +266,69 @@ router.get("/items/search", async (req, res) => {
       return res.status(400).json({ error: "Search query too long" });
     }
 
-    const settings = await getStorefrontSettings();
-
     const cacheKey = `search:${rawQ.toLowerCase()}`;
-    const cached = getCache(cacheKey);
+    const cached = cache.get(cacheKey);
     if (cached) {
       res.set("X-Cache", "HIT");
       return res.json({ items: cached });
     }
 
-    const q = rawQ;
-    let results = [];
+    const normalized = await cache.getOrLoad(cacheKey, async () => {
+      const settings = await getStorefrontSettings();
+      const q = rawQ;
+      let results = [];
 
-    try {
-      results = await Item.find(
-        { $text: { $search: q } },
-        { score: { $meta: "textScore" } }
-      )
-        .sort({ score: { $meta: "textScore" } })
-        .limit(SEARCH_LIMIT)
-        .select("_id name price imgUrl desc category isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice pricingOptions")
-        .lean();
-    } catch (_) {
-      results = [];
-    }
+      try {
+        results = await Item.find(
+          { $text: { $search: q } },
+          { score: { $meta: "textScore" } }
+        )
+          .sort({ score: { $meta: "textScore" } })
+          .limit(SEARCH_LIMIT)
+          .select("_id name price imgUrl desc category isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice pricingOptions")
+          .lean();
+      } catch (_) {
+        results = [];
+      }
 
-    if (!results.length) {
-      const escaped = safeRegex(q);
-      const re = new RegExp(escaped, "i");
-      results = await Item.find(
-        { $or: [{ name: re }, { desc: re }] },
-        null,
-        { limit: SEARCH_LIMIT }
-      )
-        .select("_id name price imgUrl desc category isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice pricingOptions")
-        .lean();
-    }
+      if (!results.length) {
+        const escaped = safeRegex(q);
+        const re = new RegExp(escaped, "i");
+        results = await Item.find(
+          { $or: [{ name: re }, { desc: re }] },
+          null,
+          { limit: SEARCH_LIMIT }
+        )
+          .select("_id name price imgUrl desc category isOutOfStock isExternalItem showSourceNotice sourceNoticeTitle sourceNoticeMessage sourceLabel sourceUrl rtc200Price rtc400Price 200price 400Price 200gPrice 400gPrice servingSize cookedQuarterPrice cookedHalfPrice cookedFullPrice oldprice pricingOptions")
+          .lean();
+      }
 
-    const normalized = results.map((it) => {
-      const sectionDisabled = isSectionDisabledForCategory(it.category, settings);
-      const pricing = buildPricingPayload(it);
+      const normalized = results.map((it) => {
+        const sectionDisabled = isSectionDisabledForCategory(it.category, settings);
+        const pricing = buildPricingPayload(it);
 
-      return {
-        _id: it._id,
-        name: it.name,
-        price: it.price ?? pricing.displayPrice,
-        img: chooseImageUrl(it.imgUrl),
-        desc: it.desc || "",
-        pricingMode: pricing.pricingMode,
-        pricingOptions: pricing.pricingOptions,
-        isExternalItem: Boolean(it.isExternalItem),
-        showSourceNotice: Boolean(it.showSourceNotice),
-        sourceNoticeTitle: it.sourceNoticeTitle,
-        sourceNoticeMessage: it.sourceNoticeMessage,
-        sourceLabel: it.sourceLabel,
-        sourceUrl: it.sourceUrl,
-        isOutOfStock: Boolean(it.isOutOfStock),
-        isCategoryDisabled: sectionDisabled,
-        isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
-      };
+        return {
+          _id: it._id,
+          name: it.name,
+          price: it.price ?? pricing.displayPrice,
+          img: chooseImageUrl(it.imgUrl),
+          desc: it.desc || "",
+          pricingMode: pricing.pricingMode,
+          pricingOptions: pricing.pricingOptions,
+          isExternalItem: Boolean(it.isExternalItem),
+          showSourceNotice: Boolean(it.showSourceNotice),
+          sourceNoticeTitle: it.sourceNoticeTitle,
+          sourceNoticeMessage: it.sourceNoticeMessage,
+          sourceLabel: it.sourceLabel,
+          sourceUrl: it.sourceUrl,
+          isOutOfStock: Boolean(it.isOutOfStock),
+          isCategoryDisabled: sectionDisabled,
+          isUnavailable: Boolean(it.isOutOfStock) || sectionDisabled,
+        };
+      });
+
+      return normalized;
     });
-
-    setCache(cacheKey, normalized);
     res.set("X-Cache", "MISS");
     return res.json({ items: normalized });
   } catch (err) {

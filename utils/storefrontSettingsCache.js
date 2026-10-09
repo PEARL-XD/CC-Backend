@@ -1,4 +1,5 @@
 import StorefrontSettings from "../models/StorefrontSettings.js";
+import { PublicReadCache } from "./publicReadCache.js";
 
 const DEFAULT_RTC_SECTION_IMAGE =
   "https://storage.googleapis.com/cccooked/banners/ready%20to%20cook.png";
@@ -17,7 +18,7 @@ const DEFAULT_SERVICEABLE_LOCALITIES = [
 ];
 
 const CACHE_TTL_MS = 30 * 1000;
-let cache = null;
+const cache = new PublicReadCache({ maxEntries: 1, ttlMs: CACHE_TTL_MS });
 
 function isPointLike(value) {
   return (
@@ -107,23 +108,14 @@ function buildSettings(settings = {}) {
 }
 
 export function clearStorefrontSettingsCache() {
-  cache = null;
+  cache.clear();
 }
 
 export async function getStorefrontSettings() {
-  if (cache && Date.now() < cache.expiresAt) {
-    return cache.value;
-  }
-
-  const settings = await StorefrontSettings.findOne({ key: "storefront" }).lean();
-  const value = buildSettings(settings);
-
-  cache = {
-    value,
-    expiresAt: Date.now() + CACHE_TTL_MS,
-  };
-
-  return value;
+  return cache.getOrLoad("storefront", async () => {
+    const settings = await StorefrontSettings.findOne({ key: "storefront" }).lean();
+    return buildSettings(settings);
+  });
 }
 
 export function buildStorefrontSettingsPayload(settings) {
