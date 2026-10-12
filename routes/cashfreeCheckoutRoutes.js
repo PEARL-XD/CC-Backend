@@ -28,6 +28,15 @@ export function createCashfreeCheckoutRouter({ authenticateToken, Order, client,
   router.post("/orders/:id/verify", async (req, res) => {
     res.json(payments.response(await payments.reconcile(await payments.owned(req.params.id, req.user.id))));
   });
+  router.post("/orders/:id/diagnostics", async (req, res) => {
+    const order = await payments.owned(req.params.id, req.user.id);
+    const safeCode = (value) => typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value) ? value : "unknown";
+    console.warn("Cashfree native checkout stopped", {
+      orderId: String(order._id), code: safeCode(req.body.code), type: safeCode(req.body.type),
+      method: safeCode(req.body.method), platform: safeCode(req.body.platform),
+    });
+    res.json({ received: true });
+  });
   router.use((error, _req, res, _next) => {
     console.error("Cashfree checkout request failed", { code: error.code || "INTERNAL", upstreamStatus: error.upstreamStatus });
     res.status(error instanceof CashfreeError ? error.status : 500).json({

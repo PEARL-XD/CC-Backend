@@ -21,6 +21,7 @@ import { getStorefrontSettings } from "../utils/storefrontSettingsCache.js";
 import {
   validateCouponForUser,
   redeemCouponForOrder,
+  releaseUnpaidCashfreeCoupon,
 } from "../utils/coupons.js";
 
 const router = express.Router();
@@ -596,6 +597,7 @@ const canUserCancelOrder = (order) => {
 export const cashfreeLiveClient = createCashfreeClient({ production: true });
 export const cashfreePayments = createCashfreeCheckout({
   Order, client: cashfreeLiveClient,
+  releaseCoupon: releaseUnpaidCashfreeCoupon,
   reserveCoupon: async (order) => {
     const redemption = await redeemCouponForOrder({
       coupon: { _id: order.couponId, code: order.couponCode }, userId: order.user,

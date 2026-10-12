@@ -138,3 +138,9 @@ export async function redeemCouponForOrder({
     },
   );
 }
+
+export async function releaseUnpaidCashfreeCoupon(order) {
+  if (order.paymentProvider !== "cashfree" || order.orderStatus !== "CANCELLED" || order.paymentStatus === "PAID" || !order.couponId) return;
+  // Release only the reservation owned by this cancelled, unfulfilled order.
+  await CouponRedemption.deleteOne({ coupon: order.couponId, user: order.user, order: order._id });
+}

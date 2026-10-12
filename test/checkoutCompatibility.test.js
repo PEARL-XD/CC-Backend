@@ -9,6 +9,8 @@ import Item from '../models/Item.js';
 import StorefrontSettings from '../models/StorefrontSettings.js';
 import { clearStorefrontSettingsCache } from '../utils/storefrontSettingsCache.js';
 import { getPackPriceForItem } from '../utils/packPricing.js';
+import { releaseUnpaidCashfreeCoupon } from '../utils/coupons.js';
+import CouponRedemption from '../models/CouponRedemption.js';
 
 // No real provider requests or database connections in this integration test.
 process.env.RAZORPAY_KEY_ID = 'rzp_test_fixture';
@@ -19,6 +21,18 @@ process.env.CASHFREE_SECRET_KEY = 'fixture-only';
 process.env.ACCESS_TOKEN_SECRET = 'fixture-access';
 const { default: router, cashfreePayments } = await import('../routes/orderRoutes.js');
 const { razorpay } = await import('../config/razorpay.js');
+
+test('changing an unpaid Cashfree checkout releases only its coupon reservation', async (t) => {
+  const removed = [];
+  t.mock.method(CouponRedemption, 'deleteOne', async (filter) => removed.push(filter));
+  const order = { _id: 'order', user: 'user', couponId: 'coupon', paymentProvider: 'cashfree', orderStatus: 'CANCELLED', paymentStatus: 'PENDING' };
+  await releaseUnpaidCashfreeCoupon(order);
+  assert.deepEqual(removed, [{ coupon: 'coupon', user: 'user', order: 'order' }]);
+  for (const change of [{ paymentStatus: 'PAID' }, { paymentProvider: 'razorpay' }, { orderStatus: 'CONFIRMED' }]) {
+    await releaseUnpaidCashfreeCoupon({ ...order, ...change });
+  }
+  assert.equal(removed.length, 1);
+});
 
 test('real order route preserves old Razorpay/COD, server prices Cashfree, and keeps address/phone guards', async (t) => {
   const uid = 'aaaaaaaaaaaaaaaaaaaaaaaa';

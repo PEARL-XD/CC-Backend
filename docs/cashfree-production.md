@@ -74,6 +74,9 @@ Have the merchant perform the transactions; automated tests never charge money.
    addresses must remain intact. Recheck normal profile/login and serviceability.
 6. Use an iOS TestFlight build and an Android internal-test release; Windows
    build/tests cannot validate iOS native checkout or production UPI app handoffs.
+   Install Android production tests through Google Play. Cashfree Integrity can
+   reject both debug APKs and locally installed release APKs before checkout opens.
+   See https://www.cashfree.com/docs/payments/online/mobile/misc/cashfree_integrity_prod_testing.
 
 ## Automated checks
 

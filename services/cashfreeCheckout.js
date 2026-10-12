@@ -8,6 +8,9 @@ export const liveOrderPattern = /^cc_[a-f0-9]{24}$/;
 const fail = (code, message, status = 409) => { throw new CashfreeError(code, message, status); };
 
 export function checkoutIdentity(userId, body) {
+  if (body.checkoutMethod !== undefined && !["all", "upi", "card", "netbanking"].includes(body.checkoutMethod)) {
+    fail("INVALID_CHECKOUT_METHOD", "Choose a supported payment method.", 400);
+  }
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(body.requestId || "")) {
     fail("REQUEST_ID_REQUIRED", "A payment request reference is required.", 400);
   }
@@ -16,8 +19,9 @@ export function checkoutIdentity(userId, body) {
     cartItems: body.cartItems, schedule: body.schedule || "", silentDelivery: body.silentDelivery === true,
     couponCode: String(body.couponCode || "").trim().toUpperCase(),
     locationKey: String(body.locationKey || ""),
+    ...(body.checkoutMethod !== undefined ? { checkoutMethod: body.checkoutMethod } : {}),
   })).digest("hex");
-  return { id, fingerprint };
+  return { id, fingerprint, checkoutMethod: body.checkoutMethod || "all" };
 }
 
 function uuidFor(value) {
@@ -34,6 +38,7 @@ export function cashfreeResponse(order) {
     paid: order.paymentStatus === "PAID", paymentStatus: order.paymentStatus,
     orderStatus: order.orderStatus, cashfreeStatus: order.cashfreeStatus,
     refundStatus: order.refundStatus || null,
+    checkoutMethod: order.cashfreeCheckoutMethod || "all",
     paymentSessionId: order.orderStatus === "CANCELLED" ? "" : (order.cashfreeSessionId || ""),
   };
 }
@@ -44,7 +49,7 @@ export function publicDeliveryOrder(order) {
   return result;
 }
 
-export function createCashfreeCheckout({ Order, client, reserveCoupon, onPaid = async () => {}, onCancelled = async () => {}, logger = console }) {
+export function createCashfreeCheckout({ Order, client, reserveCoupon, releaseCoupon = async () => {}, onPaid = async () => {}, onCancelled = async () => {}, logger = console }) {
   const read = (id) => Order.findById(id).select(secretFields);
   function assertLive(order) {
     if (!order || order.paymentProvider !== "cashfree" || order.cashfreeEnvironment !== "production") {
@@ -123,7 +128,9 @@ export function createCashfreeCheckout({ Order, client, reserveCoupon, onPaid = 
         $set: { paymentStatus: "FAILED" },
       });
     }
-    return refund(await read(order._id));
+    const current = await read(order._id);
+    if (current.orderStatus === "CANCELLED" && current.paymentStatus !== "PAID") await releaseCoupon(current);
+    return refund(current);
   }
 
   async function session(order) {
@@ -144,6 +151,9 @@ export function createCashfreeCheckout({ Order, client, reserveCoupon, onPaid = 
       remote = await client.createOrder({
         order_id: order.cashfreeOrderId, order_amount: Math.round(order.totalAmount * 100) / 100, order_currency: "INR",
         customer_details: { customer_id: String(order.user), customer_phone: order.cashfreeCustomerPhone },
+        ...({ upi: "upi", card: "cc,dc", netbanking: "nb" }[order.cashfreeCheckoutMethod] ? {
+          order_meta: { payment_methods: { upi: "upi", card: "cc,dc", netbanking: "nb" }[order.cashfreeCheckoutMethod] },
+        } : {}),
         order_note: `CleanChops order ${order._id}`,
         order_expiry_time: new Date(new Date(order.createdAt).getTime() + 30 * 60_000).toISOString(),
       }, uuidFor(order.cashfreeOrderId));
@@ -173,6 +183,7 @@ export function createCashfreeCheckout({ Order, client, reserveCoupon, onPaid = 
       order = await Order.findOneAndUpdate({ _id: identity.id }, { $setOnInsert: {
         ...snapshot, paymentProvider: "cashfree", cashfreeEnvironment: "production",
         cashfreeOrderId: `cc_${identity.id}`, cashfreeCustomerPhone: phone,
+        cashfreeCheckoutMethod: identity.checkoutMethod || "all",
         checkoutFingerprint: identity.fingerprint,
       } }, { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }).select(secretFields);
     } catch (error) {
@@ -192,6 +203,8 @@ export function createCashfreeCheckout({ Order, client, reserveCoupon, onPaid = 
       $push: { statusTimeline: { status: "CANCELLED", time: new Date() } },
     }, { new: true });
     if (!cancelled && order.orderStatus !== "CANCELLED") fail("CANNOT_CANCEL", "This order can no longer be cancelled.");
+    const current = cancelled || await read(order._id);
+    if (current.paymentStatus !== "PAID") await releaseCoupon(current);
     if (cancelled) await onCancelled(cancelled).catch(() => logger.error("Cashfree cancellation notification failed", { orderId: String(order._id) }));
     // Keep cancellation saved even if Cashfree is offline; the worker/webhook retries.
     try { await reconcile(await read(order._id)); }

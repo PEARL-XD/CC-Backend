@@ -45,6 +45,7 @@ const orderSchema = new mongoose.Schema(
     paymentProvider: { type: String, enum: ["cashfree", "razorpay"] },
     cashfreeOrderId: String,
     cashfreeEnvironment: { type: String, enum: ["production"] },
+    cashfreeCheckoutMethod: { type: String, enum: ["all", "upi", "card", "netbanking"] },
     cashfreeSessionId: { type: String, select: false },
     cashfreeCustomerPhone: { type: String, select: false },
     checkoutFingerprint: { type: String, select: false },

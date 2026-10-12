@@ -128,6 +128,18 @@ test("lost provider response recovers; changed payload/account cannot reuse chec
   assert.notEqual(checkoutIdentity(uid, request).id, checkoutIdentity(other, request).id);
 });
 
+test("selected checkout method restricts provider options and cannot change on a retry", async () => {
+  for (const [method, codes] of [['upi', 'upi'], ['card', 'cc,dc'], ['netbanking', 'nb'], ['all', undefined]]) {
+    const f = fixture(), request = { ...body(), checkoutMethod: method };
+    const response = await f.create(request);
+    assert.equal(response.checkoutMethod, method);
+    const posted = JSON.parse(f.calls.find((call) => call.options.method === 'POST').options.body);
+    assert.equal(posted.order_meta?.payment_methods, codes);
+    await assert.rejects(f.payments.resume(checkoutIdentity(uid, { ...request, checkoutMethod: method === 'card' ? 'upi' : 'card' }), uid), { code: 'CHECKOUT_CHANGED' });
+  }
+  assert.throws(() => checkoutIdentity(uid, { ...body(), checkoutMethod: 'bad' }), { code: 'INVALID_CHECKOUT_METHOD' });
+});
+
 test("only verified PAID confirms; duplicate and out-of-order callbacks never downgrade", async () => {
   const f = fixture(), result = await f.create();
   const row = await f.payments.owned(result.localOrderId, uid);
@@ -240,6 +252,13 @@ test("live routes enforce owner auth and exact signed webhook body; spoofed paid
   const path = `/orders/${result.localOrderId}/verify`;
   assert.equal((await request(path, '{}')).status, 401);
   assert.equal((await request(path, '{}', { Authorization: other })).status, 404);
+  const diagnostics = `/orders/${result.localOrderId}/diagnostics`;
+  assert.equal((await request(diagnostics, '{}', { Authorization: other })).status, 404);
+  const warnings = [];
+  t.mock.method(console, 'warn', (...args) => warnings.push(args));
+  assert.equal((await request(diagnostics, JSON.stringify({ code: 'installer_package_not_approved', type: 'feature_not_enabled', method: 'upi', platform: 'android', token: 'private' }), { Authorization: uid })).status, 200);
+  assert.equal(warnings[0][1].code, 'installer_package_not_approved');
+  assert.equal(warnings[0][1].token, undefined);
   const checked = await request(path, '{"paid":true}', { Authorization: uid });
   assert.equal((await checked.json()).paid, false);
   const raw = JSON.stringify({ data: { order: { order_id: result.cashfreeOrderId, order_status: 'PAID' } } });
