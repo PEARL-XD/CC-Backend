@@ -9,7 +9,7 @@ export class CashfreeError extends Error {
   }
 }
 
-export function createCashfreeClient({ env = process.env, fetchImpl = fetch, timeoutMs = 15_000 } = {}) {
+export function createCashfreeClient({ env = process.env, fetchImpl = fetch, timeoutMs = 15_000, production = false } = {}) {
   function configuration() {
     const environment = String(env.CASHFREE_ENV || "sandbox").trim().toLowerCase();
     const appId = String(env.CASHFREE_APP_ID || "").trim();
@@ -29,9 +29,9 @@ export function createCashfreeClient({ env = process.env, fetchImpl = fetch, tim
   }
 
   async function request(path, { body, idempotencyKey } = {}) {
-    const config = requireSandbox();
+    const config = requireConfigured();
     try {
-      const response = await fetchImpl(`https://sandbox.cashfree.com/pg${path}`, {
+      const response = await fetchImpl(`https://${production ? "api" : "sandbox"}.cashfree.com/pg${path}`, {
         method: body ? "POST" : "GET",
         headers: {
           "Content-Type": "application/json",
@@ -47,7 +47,7 @@ export function createCashfreeClient({ env = process.env, fetchImpl = fetch, tim
       // Never return provider error bodies: they can contain customer/credential data.
       if (!response.ok) {
         await response.body?.cancel();
-        throw new CashfreeError("CASHFREE_REQUEST_FAILED", "Cashfree could not complete the sandbox request. Retry with the same request ID.", 502, response.status);
+        throw new CashfreeError("CASHFREE_REQUEST_FAILED", "Cashfree could not complete the request. Retry the same payment reference.", 502, response.status);
       }
       return await response.json();
     } catch (error) {
@@ -55,8 +55,17 @@ export function createCashfreeClient({ env = process.env, fetchImpl = fetch, tim
       if (error.name === "TimeoutError" || error.name === "AbortError") {
         throw new CashfreeError("CASHFREE_TIMEOUT", "Cashfree timed out. Retry with the same request ID.", 504);
       }
-      throw new CashfreeError("CASHFREE_UNAVAILABLE", "Cashfree sandbox is temporarily unavailable.");
+      throw new CashfreeError("CASHFREE_UNAVAILABLE", "Cashfree is temporarily unavailable.");
     }
+  }
+
+  function requireConfigured() {
+    if (!production) return requireSandbox();
+    const config = configuration();
+    if (config.environment !== "production" || !config.appId || !config.secret) {
+      throw new CashfreeError("CASHFREE_NOT_CONFIGURED", "Live Cashfree checkout is not configured. Please try again later.", 503);
+    }
+    return config;
   }
 
   return {
@@ -65,10 +74,13 @@ export function createCashfreeClient({ env = process.env, fetchImpl = fetch, tim
       return { configured: environment === "sandbox" && Boolean(appId && secret), environment: "sandbox" };
     },
     requireSandbox,
+    requireConfigured,
     createOrder: (body, idempotencyKey) => request("/orders", { body, idempotencyKey }),
     getOrder: (orderId) => request(`/orders/${encodeURIComponent(orderId)}`),
+    createRefund: (orderId, body, idempotencyKey) => request(`/orders/${encodeURIComponent(orderId)}/refunds`, { body, idempotencyKey }),
+    getRefund: (orderId, refundId) => request(`/orders/${encodeURIComponent(orderId)}/refunds/${encodeURIComponent(refundId)}`),
     verifyWebhook(rawBody, signature, timestamp) {
-      const { secret } = requireSandbox();
+      const { secret } = requireConfigured();
       if (!Buffer.isBuffer(rawBody) || typeof signature !== "string" ||
           !/^[A-Za-z0-9+/]{43}=$/.test(signature) || typeof timestamp !== "string" ||
           !/^\d{10,16}$/.test(timestamp)) return false;

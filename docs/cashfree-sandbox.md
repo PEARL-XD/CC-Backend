@@ -1,8 +1,8 @@
 # Cashfree sandbox rollout
 
-This release adds an isolated **admin-only payment test API**, not a replacement
-for customer checkout. Existing Android/iOS builds and React continue using the
-same Razorpay/COD endpoints and response formats. Do not remove Razorpay settings.
+This guide covers the isolated **authenticated payment test API**, not real
+customer checkout. For the new production checkout, see [cashfree-production.md](cashfree-production.md).
+Older clients keep the same Razorpay/COD contracts. Do not remove Razorpay settings.
 
 ## Configuration
 
@@ -17,7 +17,8 @@ CASHFREE_ENV=sandbox
 Use Payment Gateway credentials, not Payouts credentials. No secret belongs in
 Flutter, React/Vite variables, Git, logs, or chat. Missing credentials disable
 only Cashfree tests. Setting `CASHFREE_ENV=production` also disables these test
-routes: changing this setting cannot switch live checkout to Cashfree.
+routes. Production checkout is a separate explicit client flow, not an upgrade
+of these INR 1 sandbox test sessions.
 
 The backend pins Cashfree API version `2026-01-01`, calls only
 `https://sandbox.cashfree.com/pg`, and uses a 15-second request deadline.
@@ -26,7 +27,10 @@ The backend pins Cashfree API version `2026-01-01`, calls only
 
 Base path: `/api/payments/cashfree/sandbox`.
 All except the signed webhook require the existing `Authorization: Bearer ...`
-access token and an account whose current database role is `admin`.
+access token and an existing account. Regular users and admins may both test;
+verification is restricted to the account that created the test. Guest requests
+are rejected. Build flags hide the UI, but are not a security boundary: any
+authenticated account can call these sandbox-only endpoints while configured.
 
 | Method/path | Purpose |
 | --- | --- |
@@ -37,13 +41,13 @@ access token and an account whose current database role is `admin`.
 
 Use a new UUID for a new test and **reuse the same UUID after any timeout or
 failure**. The record and Cashfree idempotency key are preserved across retries,
-restarts, and backend instances sharing the same MongoDB. The admin profile must
+restarts, and backend instances sharing the same MongoDB. The signed-in profile must
 have a real mobile number. The backend does not generate placeholder numbers.
 Client-supplied amounts, phone numbers, and payment-success flags are ignored.
 
 A create response contains `orderId`, `paymentSessionId`, `amount`, `currency`,
-`status`, `paid`, `provider`, `environment`, and `testOnly`. Pass the session to
-Cashfree's **sandbox** checkout SDK when adding the test UI. Never treat opening
+`status`, `paid`, `provider`, `environment`, and `testOnly`. The Flutter test UI
+passes the session to Cashfree's **sandbox** checkout SDK. Never treat opening
 or closing checkout as payment confirmation; call the verify endpoint afterward.
 
 For callbacks, configure the full HTTPS URL in Cashfree's **sandbox** dashboard:
@@ -65,14 +69,15 @@ reminders, or fulfillment. A sandbox PAID result is never a real purchase.
 
 Deploy the backend code and set the variables on both primary/fallback services.
 No app-store or React release is required to keep current checkout working.
-This code alone does not display Cashfree checkout in an existing app.
+Already-published apps do not show Cashfree checkout. Updated Flutter debug
+builds expose it in Profile and Payment options; release-mode internal builds
+must opt in using `--dart-define=CASHFREE_SANDBOX=true`. Ordinary release builds
+hide it. The test screen uses INR 1, not a cart total, and keeps the cart intact.
+The updated React checkout uses the separate production flow, not this test API.
 
-Before a production switch: add Flutter/React checkout SDKs with explicit
-provider handling, connect real server-priced orders to Cashfree, implement and
-test fulfillment/refunds/reconciliation, obtain merchant approval, and run an
-end-to-end sandbox payment. Keep older Razorpay apps and in-flight Razorpay
-orders supported during that separate rollout. Do not simply change the
-environment variable to production.
+For production, follow cashfree-production.md, configure approved credentials and
+webhooks, and deploy the updated clients. Keep older Razorpay apps and in-flight
+Razorpay orders supported during the rollout. Sandbox success is not a real order.
 
 ## Automated verification
 

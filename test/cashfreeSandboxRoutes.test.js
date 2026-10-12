@@ -19,7 +19,7 @@ async function fixture(t, configuration = env) {
   const providerOrders = new Map();
   const calls = [];
   const logs = [];
-  const state = { phone: "9876543210", upstreamStatus: 200, mismatch: false, conflict: false };
+  const state = { phone: "9876543210", upstreamStatus: 200, mismatch: false, conflict: false, deletedUser: false };
   const matches = (order, filter) => order && Object.entries(filter).every(([key, value]) => {
     if (key === "status") return order.status !== value.$ne;
     return String(order[key]) === String(value);
@@ -43,7 +43,7 @@ async function fixture(t, configuration = env) {
   };
   const User = {
     findById(id) {
-      return { select: () => ({ lean: async () => ({
+      return { select: () => ({ lean: async () => state.deletedUser ? null : ({
         role: id === userId ? "user" : "admin", phone: state.phone,
       }) }) };
     },
@@ -93,16 +93,36 @@ async function fixture(t, configuration = env) {
   return { request, records, providerOrders, calls, logs, state };
 }
 
-test("sandbox routes reject guests/customers; absent credentials do not block other paths", async (t) => {
+test("sandbox routes reject guests; absent credentials do not block other paths", async (t) => {
   const f = await fixture(t, {});
   assert.equal((await f.request("/status", { id: null })).status, 401);
-  assert.equal((await f.request("/orders", { id: userId, body: { requestId: randomUUID() } })).status, 403);
+  assert.equal((await f.request("/orders", { id: userId, body: { requestId: randomUUID() } })).status, 503);
   const status = await f.request("/status");
   assert.equal(status.body.configured, false);
   assert.equal(status.body.liveCheckoutProvider, "razorpay");
   assert.equal((await f.request("/orders", { body: { requestId: randomUUID() } })).status, 503);
   const legacy = await f.request("/api/orders/create", { id: null, body: { paymentMethod: "COD" } });
   assert.deepEqual(legacy.body, { received: { paymentMethod: "COD" }, rawCaptured: false });
+  assert.equal(f.calls.length, 0);
+});
+
+test("regular users can create and verify only their own sandbox payments", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.request("/status", { id: userId })).body.configured, true);
+  const created = await f.request("/orders", { id: userId, body: { requestId: randomUUID() } });
+  assert.equal(created.status, 200);
+  const id = created.body.orderId;
+  assert.equal(f.records.get(id).user, userId);
+  assert.equal((await f.request(`/orders/${id}/verify`, { id: adminId, body: {} })).status, 404);
+  f.providerOrders.get(id).order_status = "PAID";
+  assert.equal((await f.request(`/orders/${id}/verify`, { id: userId, body: {} })).body.paid, true);
+  assert.equal(f.records.size, 1);
+});
+
+test("deleted accounts cannot create sandbox payments even with an unexpired token", async (t) => {
+  const f = await fixture(t);
+  f.state.deletedUser = true;
+  assert.equal((await f.request("/orders", { id: userId, body: { requestId: randomUUID() } })).status, 401);
   assert.equal(f.calls.length, 0);
 });
 

@@ -8,7 +8,7 @@ export const CASHFREE_WEBHOOK_PATH = `${CASHFREE_SANDBOX_PATH}/webhook`;
 const sandboxOrderIdPattern = /^cf_sbx_[a-f0-9]{32}$/;
 
 export function captureCashfreeWebhookBody(req, _res, buffer) {
-  if (req.originalUrl.split("?")[0].replace(/\/$/, "") === CASHFREE_WEBHOOK_PATH) {
+  if ([CASHFREE_WEBHOOK_PATH, "/api/payments/cashfree/webhook"].includes(req.originalUrl.split("?")[0].replace(/\/$/, ""))) {
     req.cashfreeRawBody = Buffer.from(buffer);
   }
 }

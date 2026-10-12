@@ -41,6 +41,17 @@ const orderSchema = new mongoose.Schema(
     platformFee: { type: Number, default: 0 },
     totalAmount: { type: Number, required: true },
     razorpayOrderId: { type: String },
+    // Absent on legacy orders: those continue through Razorpay/COD unchanged.
+    paymentProvider: { type: String, enum: ["cashfree", "razorpay"] },
+    cashfreeOrderId: String,
+    cashfreeEnvironment: { type: String, enum: ["production"] },
+    cashfreeSessionId: { type: String, select: false },
+    cashfreeCustomerPhone: { type: String, select: false },
+    checkoutFingerprint: { type: String, select: false },
+    cashfreeStatus: String,
+    paymentCheckedAt: Date,
+    refundStatus: { type: String, enum: ["REQUESTED", "PENDING", "PENDING_APPROVAL", "ONHOLD", "SUCCESS", "FAILED", "CANCELLED", "REJECTED"] },
+    cashfreeRefundId: String,
     paymentStatus: {
       type: String,
       enum: ["PENDING", "PAID", "FAILED", "CANCELLED"],

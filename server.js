@@ -11,7 +11,9 @@ import cron from "node-cron";
 import authRouter, { authenticateToken } from "./routes/auth.js";
 import itemsRouter from "./routes/itemsRoutes.js";
 import cartRoutes from "./routes/cartRoutes.js";
-import orderRoutes from "./routes/orderRoutes.js";
+import orderRoutes, { cashfreePayments, cashfreeLiveClient } from "./routes/orderRoutes.js";
+import { Order } from "./models/Order.js";
+import { CASHFREE_CHECKOUT_PATH, createCashfreeCheckoutRouter } from "./routes/cashfreeCheckoutRoutes.js";
 import RefreshToken from "./models/RefreshToken.js";
 import supportRoutes from "./routes/support.js";
 import adminInventoryRoutes from "./routes/adminInventoryRoutes.js";
@@ -130,6 +132,7 @@ app.use(CASHFREE_SANDBOX_PATH, createCashfreeSandboxRouter({
   SandboxOrder: CashfreeSandboxOrder,
   client: createCashfreeClient(),
 }));
+app.use(CASHFREE_CHECKOUT_PATH, createCashfreeCheckoutRouter({ authenticateToken, Order, client: cashfreeLiveClient, payments: cashfreePayments }));
 app.use("/api", authRouter, supportRoutes,itemsRouter,cartRoutes,orderRoutes,adminInventoryRoutes,notificationRoutes,couponRoutes,);
 app.get("/", (req, res) => {
   res.send("CleanCuts backend running");
@@ -138,6 +141,15 @@ app.get("/", (req, res) => {
 /* =======================
    CRON (refresh-token cleanup)
 ======================= */
+
+let cashfreeSweepRunning = false;
+cron.schedule("* * * * *", async () => {
+  if (cashfreeSweepRunning || mongoose.connection.readyState !== 1) return;
+  cashfreeSweepRunning = true;
+  try { await cashfreePayments.sweep(); }
+  catch { console.error("Cashfree reconciliation worker failed; will retry."); }
+  finally { cashfreeSweepRunning = false; }
+});
 
 cron.schedule("*/13 * * * *", async () => {
   try {

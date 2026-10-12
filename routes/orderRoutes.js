@@ -2,6 +2,8 @@
 import crypto from "crypto";
 import { razorpay } from "../config/razorpay.js";
 import { Order } from "../models/Order.js";
+import { CashfreeError, createCashfreeClient } from "../services/cashfree.js";
+import { checkoutIdentity, createCashfreeCheckout, publicDeliveryOrder } from "../services/cashfreeCheckout.js";
 import Item from "../models/Item.js";
 import { authenticateToken } from "./auth.js";
 import { sendPushToAdmins, sendPushToUser } from "../utils/pushNotifications.js";
@@ -330,6 +332,9 @@ const confirmRazorpayOrder = async ({
   razorpay_payment_id,
   razorpay_signature,
 }) => {
+  if (order.paymentProvider === "cashfree" || !order.razorpayOrderId || order.razorpayOrderId !== razorpay_order_id) {
+    return { statusCode: 400, error: "Payment does not belong to this order", order };
+  }
   if (order.paymentStatus === "PAID") {
     return { statusCode: 409, error: "Order already verified", order };
   }
@@ -588,6 +593,32 @@ const canUserCancelOrder = (order) => {
 
 /* ---------------- ROUTES ---------------- */
 
+export const cashfreeLiveClient = createCashfreeClient({ production: true });
+export const cashfreePayments = createCashfreeCheckout({
+  Order, client: cashfreeLiveClient,
+  reserveCoupon: async (order) => {
+    const redemption = await redeemCouponForOrder({
+      coupon: { _id: order.couponId, code: order.couponCode }, userId: order.user,
+      orderId: order._id, discountAmount: order.couponDiscountAmount,
+    });
+    if (String(redemption?.order) !== String(order._id)) {
+      throw new CashfreeError("COUPON_ALREADY_USED", "This coupon is already used on another order.", 409);
+    }
+  },
+  onPaid: async (order) => {
+    await Promise.allSettled([
+      sendOrderStatusNotification(order, "CONFIRMED"),
+      sendAdminOrderStatusNotification(order, "CONFIRMED", "Order payment confirmed", "An online order has been paid and is ready to prepare."),
+    ]);
+  },
+  onCancelled: async (order) => {
+    await Promise.allSettled([
+      sendOrderStatusNotification(order, "CANCELLED"),
+      sendAdminOrderStatusNotification(order, "CANCELLED", "Order cancelled", "A Cashfree order was cancelled. Check its payment/refund status."),
+    ]);
+  },
+});
+
 /**
  * POST /api/orders/create
  * Body: { cartItems: [{ _id, quantity, selectedSize }], schedule?: string, silentDelivery?: boolean }
@@ -600,6 +631,15 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
       .trim()
       .toUpperCase();
     const paymentMethod = requestedPaymentMethod === "COD" ? "COD" : "ONLINE";
+    // Old apps omit this field and must continue receiving the Razorpay contract.
+    const useCashfree = paymentMethod === "ONLINE" && req.body.paymentProvider === "cashfree";
+    const identity = useCashfree ? checkoutIdentity(req.user.id, req.body) : null;
+    if (useCashfree) {
+      res.set("Cache-Control", "no-store");
+      cashfreeLiveClient.requireConfigured();
+      const resumed = await cashfreePayments.resume(identity, req.user.id);
+      if (resumed) return res.json(resumed);
+    }
     const couponCode = String(req.body.couponCode || "").trim();
 
     const silentDelivery =
@@ -778,6 +818,15 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
     }
 
     const amountInPaise = Math.round(totalAmount * 100);
+    if (useCashfree) {
+      return res.json(await cashfreePayments.create(identity, {
+        user: req.user.id, items: verifiedItems, schedule: scheduleText || null, paymentMethod,
+        couponCode: coupon?.code || undefined, couponId: coupon?._id, couponDiscountAmount,
+        deliveryAddress: resolvedLocation, packagingFee, platformFee, totalAmount: amountInPaise / 100,
+        paymentStatus: "PENDING", orderStatus: "PLACED", silentDelivery,
+        statusTimeline: [{ status: "PLACED", time: new Date() }],
+      }, normalizedPhone));
+    }
     let razorpayOrder = null;
 
     if (paymentMethod === "ONLINE") {
@@ -859,6 +908,10 @@ router.post("/orders/create", authenticateToken, async (req, res) => {
         : null,
     });
   } catch (err) {
+    if (err instanceof CashfreeError) {
+      console.error("Cashfree create failed", { code: err.code, upstreamStatus: err.upstreamStatus });
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
     console.error("Create order error:", err);
     return res.status(500).json({ error: "Failed to create order" });
   }
@@ -1062,6 +1115,10 @@ router.post("/orders/payment-failed", authenticateToken, async (req, res) => {
       return res.status(409).json({ error: "Paid orders cannot be cancelled" });
     }
 
+    if (order.paymentProvider === "cashfree") {
+      return res.status(409).json({ error: "Cashfree status must be verified with the payment provider, not reported by the app." });
+    }
+
     await cancelOrderForPaymentIssue(order, finalPaymentStatus);
 
     res.json({
@@ -1095,6 +1152,12 @@ router.post("/orders/:id/cancel", authenticateToken, async (req, res) => {
         error:
           "This order can no longer be cancelled. Please contact support if you need help.",
       });
+    }
+
+    if (order.paymentProvider === "cashfree") {
+      const cancelled = await cashfreePayments.cancel(order);
+      return res.json({ success: true, message: "Order cancelled. Any completed payment will be refunded through Cashfree.",
+        refundNote: "Check your order for refund status. Bank processing times may vary.", order: publicDeliveryOrder(cancelled) });
     }
 
     order.orderStatus = "CANCELLED";
@@ -1220,6 +1283,23 @@ router.patch(
       if (!order) return res.status(404).json({ error: "Order not found" });
 
       const previousStatus = order.orderStatus;
+
+      if (order.paymentProvider === "cashfree") {
+        if (status === "CANCELLED") {
+          const cancelled = await cashfreePayments.cancel(order);
+          return res.json({ success: true, order: publicDeliveryOrder(cancelled) });
+        }
+        if (order.paymentStatus !== "PAID" || order.orderStatus === "CANCELLED") {
+          return res.status(409).json({ error: "Only verified, paid Cashfree orders can be prepared or delivered." });
+        }
+        const updated = await Order.findOneAndUpdate({ _id: order._id, paymentStatus: "PAID", orderStatus: previousStatus }, {
+          $set: { orderStatus: status },
+          ...(status !== previousStatus ? { $push: { statusTimeline: { status, time: new Date() } } } : {}),
+        }, { new: true });
+        if (!updated) return res.status(409).json({ error: "Order changed. Refresh before updating it." });
+        if (status !== previousStatus) await sendOrderStatusNotification(updated, status).catch(() => {});
+        return res.json({ success: true, order: updated });
+      }
 
       order.orderStatus = status;
       order.statusTimeline.push({ status, time: new Date() });
